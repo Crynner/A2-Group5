@@ -30,8 +30,7 @@ public class ProductController {
 
 	@GetMapping
 	public List<ProductSearchResponse> search(
-			@RequestParam(required = false) String query,
-			@RequestParam(required = false) List<String> dietary) {
-		return productSearchService.search(query, dietary);
+			@RequestParam(required = false) String query) {
+		return productSearchService.search(query);
 	}
 }

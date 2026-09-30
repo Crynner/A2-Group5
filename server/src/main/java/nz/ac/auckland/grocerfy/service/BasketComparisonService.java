@@ -74,7 +74,7 @@ public class BasketComparisonService {
 
 		List<Product> requestedProducts = productRepository.findAllById(normalizedItems.keySet());
 		Map<Long, Product> productsById = requestedProducts.stream()
-				.collect(Collectors.toMap(Product::getProductId, product -> product));
+				.collect(Collectors.toMap(Product::getId, product -> product));
 
 		if (productsById.size() != normalizedItems.size()) {
 			List<Long> missingProductIds = normalizedItems.keySet().stream()
@@ -85,10 +85,10 @@ public class BasketComparisonService {
 
 		List<StorePrice> allStorePrices = storePriceRepository.findAllWithRelations();
 		Map<Long, List<StorePrice>> pricesByStore = allStorePrices.stream()
-				.collect(Collectors.groupingBy(storePrice -> storePrice.getStore().getStoreId()));
+				.collect(Collectors.groupingBy(storePrice -> storePrice.getStore().getId()));
 
 		List<StoreComparisonResponse> stores = storeRepository.findAll().stream()
-				.map(store -> toStoreComparison(store, pricesByStore.getOrDefault(store.getStoreId(), List.of()), normalizedItems, productsById))
+				.map(store -> toStoreComparison(store, pricesByStore.getOrDefault(store.getId(), List.of()), normalizedItems, productsById))
 				.sorted(Comparator.comparing(StoreComparisonResponse::available).reversed()
 						.thenComparing(StoreComparisonResponse::availableSubtotal, Comparator.nullsLast(Comparator.naturalOrder())))
 				.toList();
@@ -105,7 +105,7 @@ public class BasketComparisonService {
 		List<ProductSummaryResponse> requestedItemSummaries = normalizedItems.values().stream()
 				.map(item -> {
 					Product product = productsById.get(item.productId());
-					return new ProductSummaryResponse(product.getProductId(), product.getName(), product.getDisplayName());
+					return new ProductSummaryResponse(product.getId(), product.getProductName());
 				})
 				.toList();
 
@@ -117,7 +117,7 @@ public class BasketComparisonService {
 			Map<Long, BasketItemRequest> basketItems,
 			Map<Long, Product> productsById) {
 		Map<Long, StorePrice> storePricesByProduct = storePrices.stream()
-				.collect(Collectors.toMap(price -> price.getProduct().getProductId(), price -> price));
+				.collect(Collectors.toMap(price -> price.getProduct().getId(), price -> price));
 
 		List<StoreLineItemResponse> lineItems = new ArrayList<>();
 		List<MissingItemResponse> missingItems = new ArrayList<>();
@@ -127,15 +127,15 @@ public class BasketComparisonService {
 			Product product = productsById.get(item.productId());
 			StorePrice price = storePricesByProduct.get(item.productId());
 			if (price == null) {
-				missingItems.add(new MissingItemResponse(product.getProductId(), product.getDisplayName(), item.quantity()));
+				missingItems.add(new MissingItemResponse(product.getId(), product.getProductName(), item.quantity()));
 				continue;
 			}
 
 			BigDecimal lineTotal = price.getPrice().multiply(BigDecimal.valueOf(item.quantity())).setScale(2, RoundingMode.HALF_UP);
 			subtotal = subtotal.add(lineTotal);
 			lineItems.add(new StoreLineItemResponse(
-					product.getProductId(),
-					product.getDisplayName(),
+					product.getId(),
+					product.getProductName(),
 					item.quantity(),
 					price.getPrice().setScale(2, RoundingMode.HALF_UP),
 					lineTotal));
@@ -144,8 +144,8 @@ public class BasketComparisonService {
 		boolean available = missingItems.isEmpty();
 		BigDecimal availableSubtotal = subtotal.setScale(2, RoundingMode.HALF_UP);
 		return new StoreComparisonResponse(
-				store.getStoreId(),
-				store.getStoreName(),
+				store.getId(),
+				store.getName(),
 				store.getRegion(),
 				store.getAddress(),
 				available,

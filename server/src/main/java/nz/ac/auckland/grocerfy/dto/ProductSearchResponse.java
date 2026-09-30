@@ -7,12 +7,5 @@ package nz.ac.auckland.grocerfy.dto;
 public record ProductSearchResponse(
 		Long productId,
 		String productName,
-		String displayName,
-		String brand,
-		String category,
-		String packageSize,
-		boolean lactoseFree,
-		boolean glutenFree,
-		boolean vegetarian,
-		boolean vegan) {
+		String packageSize) {
 }

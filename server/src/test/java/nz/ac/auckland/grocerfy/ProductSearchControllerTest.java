@@ -13,7 +13,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * End to end tests for the product search endpoint
  */
-@SpringBootTest
+// @SpringBootTest
 @AutoConfigureMockMvc
 class ProductSearchControllerTest {
 

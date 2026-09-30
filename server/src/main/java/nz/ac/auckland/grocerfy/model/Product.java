@@ -1,140 +1,55 @@
 package nz.ac.auckland.grocerfy.model;
 
+import java.util.HashSet;
+import java.util.Set;
+
+import org.hibernate.annotations.Immutable;
+
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/**
- * Represents a product in the Grocerfy application including its attributes.
- */
-@Entity
+@Entity 
+@Immutable 
 @Table(name = "products")
 public class Product {
 
-	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private Long productId;
+    @Id 
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-	@Column(nullable = false, unique = true, length = 150)
-	private String productName;
+    @Column(nullable = false, length = 100, unique = true)
+    private String productName;
 
-	@Column(length = 100)
-	private String brand;
+    @Column(nullable = false, length = 20)
+    private String size;
 
-	@Column(nullable = false, length = 100)
-	private String category;
+    @ElementCollection
+    @Enumerated(EnumType.STRING)
+    private Set<Allergen> allergens = new HashSet<>(); 
 
-	@Column(name = "package_size", length = 50)
-	private String packageSize;
+    public Product() { }
 
-	@Column(nullable = false)
-	private boolean lactoseFree;
+    public Product(String productName, String size) {
+        this.productName = productName;
+        this.size = size;
+    }
 
-	@Column(nullable = false)
-	private boolean glutenFree;
+    public Long getId() {
+        return id;
+    }
+    
+    public String getProductName() {
+        return productName;
+    }
 
-	@Column(nullable = false)
-	private boolean vegetarian;
-
-	@Column(nullable = false)
-	private boolean vegan;
-
-	protected Product() {
-	}
-
-	public Product(Long productId, String productName, String brand, String category, String packageSize,
-			boolean lactoseFree, boolean glutenFree, boolean vegetarian,
-			boolean vegan) {
-		this.productId = productId;
-		this.productName = productName;
-		this.brand = brand;
-		this.category = category;
-		this.packageSize = packageSize;
-		this.lactoseFree = lactoseFree;
-		this.glutenFree = glutenFree;
-		this.vegetarian = vegetarian;
-		this.vegan = vegan;
-	}
-
-	public Long getProductId() {
-		return productId;
-	}
-
-	public void setProductId(Long productId) {
-		this.productId = productId;
-	}
-
-	public String getName() {
-		return productName;
-	}
-
-	public void setProductName(String productName) {
-		this.productName = productName;
-	}
-
-	public String getBrand() {
-		return brand;
-	}
-
-	public void setBrand(String brand) {
-		this.brand = brand;
-	}
-
-	public String getCategory() {
-		return category;
-	}
-
-	public void setCategory(String category) {
-		this.category = category;
-	}
-
-	public String getPackageSize() {
-		return packageSize;
-	}
-
-	public void setPackageSize(String packageSize) {
-		this.packageSize = packageSize;
-	}
-
-	public boolean isLactoseFree() {
-		return lactoseFree;
-	}
-
-	public void setLactoseFree(boolean lactoseFree) {
-		this.lactoseFree = lactoseFree;
-	}
-
-	public boolean isGlutenFree() {
-		return glutenFree;
-	}
-
-	public void setGlutenFree(boolean glutenFree) {
-		this.glutenFree = glutenFree;
-	}
-
-	public boolean isVegetarian() {
-		return vegetarian;
-	}
-
-	public void setVegetarian(boolean vegetarian) {
-		this.vegetarian = vegetarian;
-	}
-
-	public boolean isVegan() {
-		return vegan;
-	}
-
-	public void setVegan(boolean vegan) {
-		this.vegan = vegan;
-	}
-
-	public String getDisplayName() {
-		if (brand == null || brand.isBlank()) {
-			return productName;
-		}
-		return brand + " " + productName;
-	}
+    public String getSize() {
+        return size;
+    }
 }
