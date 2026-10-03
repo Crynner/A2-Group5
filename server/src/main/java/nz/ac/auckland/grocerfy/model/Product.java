@@ -14,17 +14,20 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity 
 @Immutable 
-@Table(name = "products")
+@Table(name = "products",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"productName", "size"})
+)
 public class Product {
 
     @Id 
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 100, unique = true)
+    @Column(nullable = false, length = 100)
     private String productName;
 
     @Column(nullable = false, length = 20)

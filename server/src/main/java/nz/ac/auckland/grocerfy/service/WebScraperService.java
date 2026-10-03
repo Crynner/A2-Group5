@@ -23,10 +23,12 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.transaction.Transactional;
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.model.Product;
+import nz.ac.auckland.grocerfy.model.Store;
+import nz.ac.auckland.grocerfy.model.StorePrice;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
 import nz.ac.auckland.grocerfy.repository.StorePriceRepository;
 import nz.ac.auckland.grocerfy.repository.StoreRepository;
@@ -35,7 +37,8 @@ import nz.ac.auckland.grocerfy.repository.StoreRepository;
 public class WebScraperService {
     private static final String PRODUCT_XPATH = "//*[@itemtype='https://schema.org/Product']";
     private static final String PRODUCT_NAME_XPATH = ".//*[@itemprop='name']";
-    private static final String PRODUCT_PRICE_XPATH = ".//*[@itemprop='price']";
+    private static final String PRODUCT_PRICE_DOLLARS_XPATH = ".//*[@data-testid='price-dollars']";
+    private static final String PRODUCT_PRICE_CENTS_XPATH = ".//*[@data-testid='price-cents']";
     private static final String PRODUCT_SIZE_XPATH = ".//*[@data-testid='product-subtitle']";
 
     private final ProductRepository productRepository;
@@ -84,20 +87,27 @@ public class WebScraperService {
     }
 
     private synchronized void executeScraping() {
+        Store store = bootstrap(); // remove later outside testing
         // open file with links
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(mainlinksResource.getInputStream(), StandardCharsets.UTF_8))) {
             for (String link: reader.lines().toList()) {
                 try {
                     HttpResponse<String> res = scraperClient.send(makeRequest(link), HttpResponse.BodyHandlers.ofString());
-                    List<Product> modelProducts = extractProducts(res)
-                        .stream()
-                        .map(productInfo -> new Product(
-                            productInfo.productName(),
-                            productInfo.productSize()
-                        )).toList();
+                    // convert list of productinfo to list of product (remove price)
+                    List<ProductInfo> rawProducts = extractProducts(res);
+                    
+                    List<Product> productItems = new ArrayList<>();
+                    List<StorePrice> productPrices = new ArrayList<>();
+                    for (ProductInfo productInfo : rawProducts) {
+                        Product product = new Product(productInfo.productName(), productInfo.productSize());
+                        StorePrice productPrice = new StorePrice(product, store, productInfo.price());
+
+                        productItems.add(product);
+                        productPrices.add(productPrice);
+                    }
                     
                     // transactional method call - writes to db
-                    saveProducts(modelProducts);
+                    saveProducts(productItems, productPrices);
                     
                 } catch (Exception exc) {
                     exc.printStackTrace();
@@ -137,9 +147,22 @@ public class WebScraperService {
             Element nameElement = product.selectXpath(PRODUCT_NAME_XPATH).first();
             String name = nameElement == null ? null : nameElement.text().trim();
 
-            // "content" attribute associated with price number
-            Element priceElement = product.selectXpath(PRODUCT_PRICE_XPATH).first();
-            BigDecimal price = priceElement == null ? null : new BigDecimal(priceElement.attr("content"));
+            // last to skip multibuy deals
+            Element dollarElement = product.selectXpath(PRODUCT_PRICE_DOLLARS_XPATH).last();
+            Element centElement = product.selectXpath(PRODUCT_PRICE_CENTS_XPATH).last();
+            BigDecimal price;
+            if (dollarElement != null && centElement != null) {
+                try {
+                    price = new BigDecimal(dollarElement.text() + "." + centElement.text());
+                } catch (NumberFormatException e) {
+                    price = null;
+                    System.err.println("Error for product: " + name + " given price " + dollarElement.text() + "." + centElement.text() + ": " + e.getLocalizedMessage());
+                }
+                
+            } else {
+                price = null;
+                System.out.println("Price invalid/not found");
+            }
 
             Element sizeElement = product.selectXpath(PRODUCT_SIZE_XPATH).first();
             String size = sizeElement == null ? null : sizeElement.text().trim();
@@ -151,7 +174,16 @@ public class WebScraperService {
     }
 
     @Transactional
-    private void saveProducts(List<Product> products) {
+    private void saveProducts(List<Product> products, List<StorePrice> prices) {
         productRepository.saveAllAndFlush(products);
+        storePriceRepository.saveAllAndFlush(prices);
+    }
+
+    /** test script, puts in one store for price checking */
+    @Transactional
+    private Store bootstrap() {
+        Store store = new Store("royal oak paknsave", "auckland", "123 place road");
+        storeRepository.save(store);
+        return store;
     }
 }
