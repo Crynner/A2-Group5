@@ -4,6 +4,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.math.BigDecimal;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -11,6 +13,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -45,7 +49,10 @@ public class WebScraperService {
     private final StoreRepository storeRepository;
     private final StorePriceRepository storePriceRepository;
 
+    private final CookieManager cookieManager = new CookieManager();
     private final HttpClient scraperClient;
+
+    private final String paknsaveSessionAuth;
 
     @Value("classpath:mainlinks.txt")
     private Resource mainlinksResource;
@@ -60,9 +67,14 @@ public class WebScraperService {
         this.storeRepository = storeRepository;
         this.storePriceRepository = storePriceRepository;
 
+        cookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ALL);
         this.scraperClient = HttpClient.newBuilder()
+            .cookieHandler(cookieManager)
             .version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
+
+        paknsaveSessionAuth = paknsaveInit();
     }
 
     /**
@@ -78,7 +90,6 @@ public class WebScraperService {
 
     /**
      * Runs every 2 days.
-     * 'P2D' is ISO-8601 duration format for 2 days.
      * initialDelayString prevents running immediately on startup alongside the event listener.
      */
     @Scheduled(fixedRateString = "P2D", initialDelayString = "P2D")
@@ -88,6 +99,14 @@ public class WebScraperService {
 
     private synchronized void executeScraping() {
         Store store = bootstrap(); // remove later outside testing
+        HttpResponse<String> storeResponse = setPaknsaveStore("9cd8eb60-3222-4efc-bd7c-50e03e6a81a4");
+        if (storeResponse == null) {
+            System.err.println("Store POST closed unexpectedly, see above error for details.");
+        }
+        if (storeResponse.statusCode() >= 400) {
+            System.out.println("Store POST failed unexpectedly, code: " + storeResponse.statusCode());
+        }
+        
         // open file with links
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(mainlinksResource.getInputStream(), StandardCharsets.UTF_8))) {
             for (String link: reader.lines().toList()) {
@@ -102,12 +121,13 @@ public class WebScraperService {
                         Product product = new Product(productInfo.productName(), productInfo.productSize());
                         StorePrice productPrice = new StorePrice(product, store, productInfo.price());
 
+                        saveProduct(product, productPrice);
                         productItems.add(product);
                         productPrices.add(productPrice);
                     }
                     
                     // transactional method call - writes to db
-                    saveProducts(productItems, productPrices);
+                    // saveProducts(productItems, productPrices);
                     
                 } catch (Exception exc) {
                     exc.printStackTrace();
@@ -174,16 +194,108 @@ public class WebScraperService {
     }
 
     @Transactional
-    private void saveProducts(List<Product> products, List<StorePrice> prices) {
+    public void saveProducts(List<Product> products, List<StorePrice> prices) {
         productRepository.saveAllAndFlush(products);
         storePriceRepository.saveAllAndFlush(prices);
     }
 
+    @Transactional
+    public void saveProduct(Product product, StorePrice price) {
+        productRepository.save(product);
+        storePriceRepository.save(price);
+    }
+
     /** test script, puts in one store for price checking */
     @Transactional
-    private Store bootstrap() {
+    public Store bootstrap() {
         Store store = new Store("royal oak paknsave", "auckland", "123 place road");
         storeRepository.save(store);
         return store;
+    }
+
+    private String paknsaveInit() {
+        // initialise generic store cookies - visit homepage
+        HttpRequest homeRequest = HttpRequest.newBuilder()
+            .uri(URI.create("https://www.paknsave.co.nz/"))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "en-US")
+            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
+            .header("Sec-Ch-Ua-Mobile", "?0")
+            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "none")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .GET()
+            .build();
+
+        try {
+            scraperClient.send(homeRequest, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception exc) {
+            exc.printStackTrace();
+            return null;
+        }
+
+        HttpRequest authRequest = HttpRequest.newBuilder()
+            .uri(URI.create("https://www.paknsave.co.nz/api/user/get-current-user"))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US")
+            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
+            .header("Sec-Ch-Ua-Mobile", "?0")
+            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .header("Content-Type", "application/json")
+            .header("Origin", "https://www.paknsave.co.nz")
+            .header("Referer", "https://www.paknsave.co.nz/")
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+            .build();
+        
+        try {
+            Pattern re = Pattern.compile("\"access_token\":\"(\\S*?)\"");
+            HttpResponse<String> authResponse = scraperClient.send(authRequest, HttpResponse.BodyHandlers.ofString());
+            System.out.println(authResponse.body());
+            Matcher match = re.matcher(authResponse.body());
+            match.find();
+            return match.group(1);
+        } catch (Exception exc) {
+            exc.printStackTrace();
+            return null;
+        }
+    }
+
+    private HttpResponse<String> setPaknsaveStore(String storeId) {
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create("https://api-prod.paknsave.co.nz/v1/edge/cart/store/" + storeId))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US")
+            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
+            .header("Sec-Ch-Ua-Mobile", "?0")
+            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + paknsaveSessionAuth)
+            .header("Origin", "https://www.paknsave.co.nz")
+            .header("Referer", "https://www.paknsave.co.nz/")
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+            .build();
+        try {
+            return scraperClient.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception exc) {
+            exc.printStackTrace();
+            return null;
+        }
+        
     }
 }

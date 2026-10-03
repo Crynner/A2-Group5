@@ -1,0 +1,21 @@
+[
+    {
+        "supermarket": "Pak'nSave",
+        "links": [
+            "https://www.paknsave.co.nz/shop/category/fruit-and-vegetables",
+            "https://www.paknsave.co.nz/shop/category/meat-poultry-and-seafood"
+        ],
+        "branches": [
+            {
+                "store_name": "Royal Oak",
+                "address": "filleraddress",
+                "region_cookie": "e1925ea7-01bc-4358-ae7c-c6502da5ab12"
+            },
+            {
+                "store_name": "Manukau",
+                "address": "filleraddress",
+                "region_cookie": "9cd8eb60-3222-4efc-bd7c-50e03e6a81a4" 
+            }
+        ]
+    }
+]
