@@ -10,14 +10,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -30,9 +25,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
@@ -41,8 +36,11 @@ import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
-import nz.ac.auckland.grocerfy.repository.StorePriceRepository;
-import nz.ac.auckland.grocerfy.repository.StoreRepository;
+
+// TODO have better exception handling
+// TODO logger whatnots?
+// TODO refactor generic headers
+// TODO wipe store prices every 2 days
 
 @Service
 public class WebScraperService {
@@ -53,8 +51,6 @@ public class WebScraperService {
     private static final String PRODUCT_SIZE_XPATH = ".//*[@data-testid='product-subtitle']";
 
     private final ProductRepository productRepository;
-    private final StoreRepository storeRepository;
-    private final StorePriceRepository storePriceRepository;
 
     private final ScraperDatabaseService databaseService;
 
@@ -63,13 +59,7 @@ public class WebScraperService {
     private final CookieManager cookieManager = new CookieManager();
     private final HttpClient scraperClient;
 
-    private final Map<String, Product> productCache = new HashMap<>();
-    private final Set<StorePrice> priceCache = new HashSet<>();
-
     private final String paknsaveSessionAuth;
-
-    @Value("classpath:mainlinks.txt")
-    private Resource mainlinksResource;
 
     @Value ("classpath:scrape_targets.json")
     private Resource targets;
@@ -77,13 +67,9 @@ public class WebScraperService {
     @Autowired 
     public WebScraperService(
         ProductRepository productRepository,
-        StoreRepository storeRepository,
-        StorePriceRepository storePriceRepository,
         ScraperDatabaseService databaseService
     ) {
         this.productRepository = productRepository;
-        this.storeRepository = storeRepository;
-        this.storePriceRepository = storePriceRepository;
         this.databaseService = databaseService;
 
         cookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ALL);
@@ -117,8 +103,10 @@ public class WebScraperService {
     }
 
     private synchronized void executeScraping() {
+        // firstly wipe storeprices
         // open json file, parsed as object?
         try (InputStream inputStream = targets.getInputStream()) {
+            // iterate ove reach supermarket brand (e.g. paknsave, new world, etc.)
             for (ScraperConfig scraperData : mapper.readValue(inputStream, new TypeReference<List<ScraperConfig>>(){})) {
                 for (Map<String, String> storeInfo : scraperData.branches()) {
                     // change client's store region
@@ -127,19 +115,20 @@ public class WebScraperService {
                         continue;
                     }
 
-                    Store currentStore = addStore(
+                    Store currentStore = databaseService.addStore(
                         scraperData.supermarket() + " " + storeInfo.get("store_name"),
                         storeInfo.get("store_name"),
                         storeInfo.get("address"));
 
-                    System.out.println("Store made: " + currentStore.getName());
+                    System.out.println("Store created: " + currentStore.getName());
 
                     scrapeLinks(scraperData.links(), currentStore);
 
                 }
+                System.out.println("All stores for " + scraperData.supermarket() + " completed.");
             }
         } catch (IOException exc) {
-            System.err.println("Some IO issue");
+            System.err.println("Some IO issue, " + exc.getLocalizedMessage());
         } 
     }
 
@@ -177,11 +166,12 @@ public class WebScraperService {
             List<ProductInfo> productData = extractProducts(doc);
 
             for (ProductInfo productInfo : productData) {
-                Product product = createOrGetProduct(productInfo.productName(), productInfo.productSize());
+                Product product = databaseService.createOrGetProduct(productInfo.productName(), productInfo.productSize());
                 StorePrice productPrice = new StorePrice(product, store, productInfo.price());
 
-                saveProductPrice(productPrice);
+                databaseService.saveProductPrice(productPrice);
             }
+            System.out.println("Link fully scraped: " + link);
         }
     }
 
@@ -243,49 +233,6 @@ public class WebScraperService {
         return products;
     }
 
-    @Transactional
-    public void saveProducts(List<Product> products, List<StorePrice> prices) {
-        productRepository.saveAllAndFlush(products);
-        storePriceRepository.saveAllAndFlush(prices);
-    }
-
-    @Transactional
-    public Product createOrGetProduct(String name, String size) {
-        String cacheName = name + ":~:" + size;
-        if (productCache.containsKey(cacheName)) {
-            return productCache.get(cacheName);
-        }
-        Product newProduct = productRepository.save(new Product(name, size));
-        productCache.put(cacheName, newProduct);
-        return newProduct;
-    }
-
-    /**
-     * Saves store price to database if not cached (already exists), locally enforcing uniqueness.
-     * @param price The StorePrice object to add.
-     */
-    @Transactional
-    public void saveProductPrice(StorePrice price) {
-        if (!priceCache.contains(price)) {
-            storePriceRepository.save(price);
-            priceCache.add(price);
-        }
-    }
-
-    /**
-     * Adds store, given constructor parameters, to database.
-     * @param name the store name
-     * @param region the region of the store
-     * @param address the address of the store (number and street)
-     * @return
-     */
-    @Transactional 
-    public Store addStore(String name, String region, String address) {
-        return storeRepository.save(
-            new Store(name, region, address)
-        );
-    }
-
     /**
      * Initialises necessary cookies and headers for Pak'nSave scraping.
      * @return The auth token header to use under 'Bearer'.
@@ -336,12 +283,10 @@ public class WebScraperService {
             .build();
         
         try {
-            // TODO change to objectmapper based get
-            Pattern re = Pattern.compile("\"access_token\":\"(\\S*?)\"");
             HttpResponse<String> authResponse = scraperClient.send(authRequest, HttpResponse.BodyHandlers.ofString());
-            Matcher match = re.matcher(authResponse.body());
-            match.find();
-            return match.group(1);
+            // process json response to get the auth token
+            JsonNode authNode = mapper.readTree(authResponse.body());
+            return authNode.get("access_token").asText();
         } catch (Exception exc) {
             exc.printStackTrace();
             return null;
