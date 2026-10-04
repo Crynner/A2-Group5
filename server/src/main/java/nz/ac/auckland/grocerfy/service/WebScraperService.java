@@ -1,8 +1,7 @@
 package nz.ac.auckland.grocerfy.service;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -10,9 +9,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,7 +32,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
+import nz.ac.auckland.grocerfy.dto.ScraperConfig;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
@@ -49,23 +56,35 @@ public class WebScraperService {
     private final StoreRepository storeRepository;
     private final StorePriceRepository storePriceRepository;
 
+    private final ScraperDatabaseService databaseService;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
     private final CookieManager cookieManager = new CookieManager();
     private final HttpClient scraperClient;
+
+    private final Map<String, Product> productCache = new HashMap<>();
+    private final Set<StorePrice> priceCache = new HashSet<>();
 
     private final String paknsaveSessionAuth;
 
     @Value("classpath:mainlinks.txt")
     private Resource mainlinksResource;
 
+    @Value ("classpath:scrape_targets.json")
+    private Resource targets;
+
     @Autowired 
     public WebScraperService(
         ProductRepository productRepository,
         StoreRepository storeRepository,
-        StorePriceRepository storePriceRepository
+        StorePriceRepository storePriceRepository,
+        ScraperDatabaseService databaseService
     ) {
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.storePriceRepository = storePriceRepository;
+        this.databaseService = databaseService;
 
         cookieManager.setCookiePolicy(CookiePolicy.ACCEPT_ALL);
         this.scraperClient = HttpClient.newBuilder()
@@ -98,46 +117,30 @@ public class WebScraperService {
     }
 
     private synchronized void executeScraping() {
-        Store store = bootstrap(); // remove later outside testing
-        HttpResponse<String> storeResponse = setPaknsaveStore("9cd8eb60-3222-4efc-bd7c-50e03e6a81a4");
-        if (storeResponse == null) {
-            System.err.println("Store POST closed unexpectedly, see above error for details.");
-        }
-        if (storeResponse.statusCode() >= 400) {
-            System.out.println("Store POST failed unexpectedly, code: " + storeResponse.statusCode());
-        }
-        
-        // open file with links
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(mainlinksResource.getInputStream(), StandardCharsets.UTF_8))) {
-            for (String link: reader.lines().toList()) {
-                try {
-                    HttpResponse<String> res = scraperClient.send(makeRequest(link), HttpResponse.BodyHandlers.ofString());
-                    // convert list of productinfo to list of product (remove price)
-                    List<ProductInfo> rawProducts = extractProducts(res);
-                    
-                    List<Product> productItems = new ArrayList<>();
-                    List<StorePrice> productPrices = new ArrayList<>();
-                    for (ProductInfo productInfo : rawProducts) {
-                        Product product = new Product(productInfo.productName(), productInfo.productSize());
-                        StorePrice productPrice = new StorePrice(product, store, productInfo.price());
-
-                        saveProduct(product, productPrice);
-                        productItems.add(product);
-                        productPrices.add(productPrice);
+        // open json file, parsed as object?
+        try (InputStream inputStream = targets.getInputStream()) {
+            for (ScraperConfig scraperData : mapper.readValue(inputStream, new TypeReference<List<ScraperConfig>>(){})) {
+                for (Map<String, String> storeInfo : scraperData.branches()) {
+                    // change client's store region
+                    if (!setPaknsaveStore(storeInfo.get("region_cookie"))) {
+                        System.err.println("Store POST closed unexpectedly, see above error for details.");
+                        continue;
                     }
-                    
-                    // transactional method call - writes to db
-                    // saveProducts(productItems, productPrices);
-                    
-                } catch (Exception exc) {
-                    exc.printStackTrace();
+
+                    Store currentStore = addStore(
+                        scraperData.supermarket() + " " + storeInfo.get("store_name"),
+                        storeInfo.get("store_name"),
+                        storeInfo.get("address"));
+
+                    System.out.println("Store made: " + currentStore.getName());
+
+                    scrapeLinks(scraperData.links(), currentStore);
+
                 }
-                
             }
         } catch (IOException exc) {
-            exc.printStackTrace();
-        }
-        // market pre-session setup
+            System.err.println("Some IO issue");
+        } 
     }
 
     private HttpRequest makeRequest(String link) {
@@ -158,10 +161,57 @@ public class WebScraperService {
             .build();
     }
 
-    private List<ProductInfo> extractProducts(HttpResponse<String> response) {
+    /**
+     * Scrapes provided links given a Store object to correspond the prices to.
+     * @param links the list of links to scrape
+     * @param store the store to map prices to (regional pricing)
+     */
+    private void scrapeLinks(List<String> links, Store store) {
+        for (String link : links) {
+            Optional<Document> docOpt = getWebPage(link);
+            if (docOpt.isEmpty()) {
+                System.err.println("Link failed, skipping: " + link);
+                continue;
+            }
+            Document doc = docOpt.get();
+            List<ProductInfo> productData = extractProducts(doc);
+
+            for (ProductInfo productInfo : productData) {
+                Product product = createOrGetProduct(productInfo.productName(), productInfo.productSize());
+                StorePrice productPrice = new StorePrice(product, store, productInfo.price());
+
+                saveProductPrice(productPrice);
+            }
+        }
+    }
+
+    /**
+     * Helper method for processing GET body without repeated try-catch patterns.
+     * @param link the URL to GET
+     * @return the link's DOM, else Optional.empty()
+     */
+    private Optional<Document> getWebPage(String link) {
+        try {
+            HttpResponse<String> res = scraperClient.send(makeRequest(link), HttpResponse.BodyHandlers.ofString());
+            return Optional.of(Jsoup.parse(res.body()));
+        } catch (InterruptedException exc) { // propagate interruption signal
+            System.err.println("Caught interrupt from GET " + link + ", no data returned.");
+            Thread.currentThread().interrupt();
+        } catch (IOException exc) {
+            System.err.println("Caught IO error from GET " + link + ", no data returned.");
+        }
+        return Optional.empty();
+        
+    }
+
+    /**
+     * Extracts the Product information and their associated prices.
+     * @param html the DOM of the scraped page
+     * @return a list of ProductInfo DTO objects, holding necesary Product info plus prices.
+     */
+    private List<ProductInfo> extractProducts(Document html) {
         List<ProductInfo> products = new ArrayList<>();
-        Document dom = Jsoup.parse(response.body());
-        Elements productRaws = dom.selectXpath(PRODUCT_XPATH);
+        Elements productRaws = html.selectXpath(PRODUCT_XPATH);
         for (Element product : productRaws) {
             // for each element, extracts text only if not null from first()
             Element nameElement = product.selectXpath(PRODUCT_NAME_XPATH).first();
@@ -200,19 +250,46 @@ public class WebScraperService {
     }
 
     @Transactional
-    public void saveProduct(Product product, StorePrice price) {
-        productRepository.save(product);
-        storePriceRepository.save(price);
+    public Product createOrGetProduct(String name, String size) {
+        String cacheName = name + ":~:" + size;
+        if (productCache.containsKey(cacheName)) {
+            return productCache.get(cacheName);
+        }
+        Product newProduct = productRepository.save(new Product(name, size));
+        productCache.put(cacheName, newProduct);
+        return newProduct;
     }
 
-    /** test script, puts in one store for price checking */
+    /**
+     * Saves store price to database if not cached (already exists), locally enforcing uniqueness.
+     * @param price The StorePrice object to add.
+     */
     @Transactional
-    public Store bootstrap() {
-        Store store = new Store("royal oak paknsave", "auckland", "123 place road");
-        storeRepository.save(store);
-        return store;
+    public void saveProductPrice(StorePrice price) {
+        if (!priceCache.contains(price)) {
+            storePriceRepository.save(price);
+            priceCache.add(price);
+        }
     }
 
+    /**
+     * Adds store, given constructor parameters, to database.
+     * @param name the store name
+     * @param region the region of the store
+     * @param address the address of the store (number and street)
+     * @return
+     */
+    @Transactional 
+    public Store addStore(String name, String region, String address) {
+        return storeRepository.save(
+            new Store(name, region, address)
+        );
+    }
+
+    /**
+     * Initialises necessary cookies and headers for Pak'nSave scraping.
+     * @return The auth token header to use under 'Bearer'.
+     */
     private String paknsaveInit() {
         // initialise generic store cookies - visit homepage
         HttpRequest homeRequest = HttpRequest.newBuilder()
@@ -232,6 +309,7 @@ public class WebScraperService {
             .build();
 
         try {
+            // send request discarding GET body (we only care about cookies)
             scraperClient.send(homeRequest, HttpResponse.BodyHandlers.discarding());
         } catch (Exception exc) {
             exc.printStackTrace();
@@ -258,9 +336,9 @@ public class WebScraperService {
             .build();
         
         try {
+            // TODO change to objectmapper based get
             Pattern re = Pattern.compile("\"access_token\":\"(\\S*?)\"");
             HttpResponse<String> authResponse = scraperClient.send(authRequest, HttpResponse.BodyHandlers.ofString());
-            System.out.println(authResponse.body());
             Matcher match = re.matcher(authResponse.body());
             match.find();
             return match.group(1);
@@ -270,7 +348,12 @@ public class WebScraperService {
         }
     }
 
-    private HttpResponse<String> setPaknsaveStore(String storeId) {
+    /**
+     * Sets the store of the paknsave to view their respective regional prices.
+     * @param storeId The Pak'nSave store UUID
+     * @return true if POST request is successful, else false.
+     */
+    private boolean setPaknsaveStore(String storeId) {
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create("https://api-prod.paknsave.co.nz/v1/edge/cart/store/" + storeId))
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
@@ -291,10 +374,16 @@ public class WebScraperService {
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
         try {
-            return scraperClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = scraperClient.send(req, HttpResponse.BodyHandlers.ofString());
+            // 400+ indicates error
+            if (response.statusCode() >= 400) {
+                System.err.println("Store POST failed unexpectedly, code: " + response.statusCode());
+                return false;
+            }
+            return true;
         } catch (Exception exc) {
             exc.printStackTrace();
-            return null;
+            return false;
         }
         
     }

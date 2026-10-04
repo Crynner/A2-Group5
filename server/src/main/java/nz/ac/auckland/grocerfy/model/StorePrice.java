@@ -1,6 +1,7 @@
 package nz.ac.auckland.grocerfy.model;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 
 import org.hibernate.annotations.Immutable;
 
@@ -51,5 +52,24 @@ public class StorePrice {
 
     public BigDecimal getPrice() {
         return price;
+    }
+
+    @Override 
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof StorePrice)) {
+            return false;
+        }
+
+        StorePrice compPrice = (StorePrice) obj;
+        return (getProduct().getId().equals(compPrice.getProduct().getId())
+                && getStore().getId().equals(compPrice.getStore().getId()));
+    }
+
+    @Override 
+    public int hashCode() {
+        return Objects.hash(getProduct(), getStore());
     }
 }
