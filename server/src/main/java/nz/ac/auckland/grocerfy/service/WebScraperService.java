@@ -44,11 +44,37 @@ import nz.ac.auckland.grocerfy.repository.ProductRepository;
 
 @Service
 public class WebScraperService {
+    private static final String PAKNSAVE_ADDRESS = "https://www.paknsave.co.nz";
+
     private static final String PRODUCT_XPATH = "//*[@itemtype='https://schema.org/Product']";
     private static final String PRODUCT_NAME_XPATH = ".//*[@itemprop='name']";
     private static final String PRODUCT_PRICE_DOLLARS_XPATH = ".//*[@data-testid='price-dollars']";
     private static final String PRODUCT_PRICE_CENTS_XPATH = ".//*[@data-testid='price-cents']";
     private static final String PRODUCT_SIZE_XPATH = ".//*[@data-testid='product-subtitle']";
+
+    // missing Sec-Fetch-User, Upgrade-Insecure-Requests
+
+    private static final String[] GENERIC_HEADERS = {
+        "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+        "Accept-Language", "en-US",
+        "Sec-Ch-Ua", "\"Chromium\";v=\"154\", \"Google Chrome\";v=\"154\", \"Not A(Brand\";v=\"99\"",
+        "Sec-Ch-Ua-Mobile", "?0",
+        "Sec-Ch-Ua-Platform", "\"Windows\""
+    };
+
+    private static final String[] GET_HEADERS = {
+        "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Sec-Fetch-Dest", "document",
+        "Sec-Fetch-Mode", "navigate",
+        "Sec-Fetch-Site", "none"
+    };
+
+    private static final String[] POST_HEADERS = {
+        "Accept", "*/*",
+        "Sec-Fetch-Dest", "empty",
+        "Sec-Fetch-Mode", "cors",
+        "Content-Type", "application/json"
+    };
 
     private final ProductRepository productRepository;
 
@@ -61,7 +87,7 @@ public class WebScraperService {
 
     private final String paknsaveSessionAuth;
 
-    @Value ("classpath:scrape_targets.json")
+    @Value ("classpath:scrape_targets_min.json")
     private Resource targets;
 
     @Autowired 
@@ -132,20 +158,16 @@ public class WebScraperService {
         } 
     }
 
+    /**
+     * builds an HttpRequest from the provided link and return the request object.
+     * @param link the link to GET from
+     * @return the HttpRequest object with populated headers
+     */
     private HttpRequest makeRequest(String link) {
         return HttpRequest.newBuilder()
             .uri(URI.create(link))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "en-US")
-            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
-            .header("Sec-Ch-Ua-Mobile", "?0")
-            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "none")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
+            .headers(GENERIC_HEADERS)
+            .headers(GET_HEADERS)
             .GET()
             .build();
     }
@@ -239,25 +261,9 @@ public class WebScraperService {
      */
     private String paknsaveInit() {
         // initialise generic store cookies - visit homepage
-        HttpRequest homeRequest = HttpRequest.newBuilder()
-            .uri(URI.create("https://www.paknsave.co.nz/"))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "en-US")
-            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
-            .header("Sec-Ch-Ua-Mobile", "?0")
-            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "none")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .GET()
-            .build();
-
         try {
             // send request discarding GET body (we only care about cookies)
-            scraperClient.send(homeRequest, HttpResponse.BodyHandlers.discarding());
+            scraperClient.send(makeRequest(PAKNSAVE_ADDRESS), HttpResponse.BodyHandlers.discarding());
         } catch (Exception exc) {
             exc.printStackTrace();
             return null;
@@ -265,20 +271,11 @@ public class WebScraperService {
 
         HttpRequest authRequest = HttpRequest.newBuilder()
             .uri(URI.create("https://www.paknsave.co.nz/api/user/get-current-user"))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US")
-            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
-            .header("Sec-Ch-Ua-Mobile", "?0")
-            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "empty")
-            .header("Sec-Fetch-Mode", "cors")
+            .headers(GENERIC_HEADERS)
+            .headers(POST_HEADERS)
             .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .header("Content-Type", "application/json")
-            .header("Origin", "https://www.paknsave.co.nz")
-            .header("Referer", "https://www.paknsave.co.nz/")
+            .header("Origin", PAKNSAVE_ADDRESS)
+            .header("Referer", PAKNSAVE_ADDRESS)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
         
@@ -301,31 +298,24 @@ public class WebScraperService {
     private boolean setPaknsaveStore(String storeId) {
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create("https://api-prod.paknsave.co.nz/v1/edge/cart/store/" + storeId))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US")
-            .header("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\"")
-            .header("Sec-Ch-Ua-Mobile", "?0")
-            .header("Sec-Ch-Ua-Platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "empty")
-            .header("Sec-Fetch-Mode", "cors")
+            .headers(GENERIC_HEADERS)
+            .headers(POST_HEADERS)
             .header("Sec-Fetch-Site", "same-site")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + paknsaveSessionAuth)
-            .header("Origin", "https://www.paknsave.co.nz")
-            .header("Referer", "https://www.paknsave.co.nz/")
+            .header("Origin", PAKNSAVE_ADDRESS)
+            .header("Referer", PAKNSAVE_ADDRESS)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
         try {
-            HttpResponse<String> response = scraperClient.send(req, HttpResponse.BodyHandlers.ofString());
-            // 400+ indicates error
+            // discarding (response body is irrelevant)
+            HttpResponse<Void> response = scraperClient.send(req, HttpResponse.BodyHandlers.discarding());
+            
             if (response.statusCode() >= 400) {
                 System.err.println("Store POST failed unexpectedly, code: " + response.statusCode());
                 return false;
             }
             return true;
+
         } catch (Exception exc) {
             exc.printStackTrace();
             return false;

@@ -1,0 +1,15 @@
+[
+    {
+        "supermarket": "Pak'nSave",
+        "links": [
+            "https://www.paknsave.co.nz/shop/category/fruit-and-vegetables"
+        ],
+        "branches": [
+            {
+                "store_name": "Royal Oak",
+                "address": "691 Manukau Road, Royal Oak, Auckland 1023",
+                "region_cookie": "e1925ea7-01bc-4358-ae7c-c6502da5ab12"
+            }
+        ]
+    }
+]
