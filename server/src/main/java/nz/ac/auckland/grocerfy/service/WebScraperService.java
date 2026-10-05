@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandler;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,9 +39,6 @@ import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
-import nz.ac.auckland.grocerfy.repository.StorePriceRepository;
-
-// TODO wipe store prices every 2 days
 
 @Service
 public class WebScraperService {
@@ -86,7 +85,7 @@ public class WebScraperService {
     private final CookieManager cookieManager = new CookieManager();
     private final HttpClient scraperClient;
 
-    private final String paknsaveSessionAuth;
+    private String paknsaveSessionAuth;
 
     @Value ("classpath:scrape_targets_min.json")
     private Resource targets;
@@ -106,7 +105,12 @@ public class WebScraperService {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-        paknsaveSessionAuth = paknsaveInit();
+        try {
+            paknsaveSessionAuth = paknsaveInit();
+        } catch (IllegalStateException exc) {
+            paknsaveSessionAuth = null;
+        }
+        
     }
 
     /**
@@ -126,16 +130,27 @@ public class WebScraperService {
      */
     @Scheduled(fixedRateString = "P2D", initialDelayString = "P2D")
     public void scheduledScrape() {
+        if (paknsaveSessionAuth == null) {
+            System.err.println("Auth token error. Early termination...");
+            return; // early terminate
+        }
         executeScraping();
     }
 
+    /**
+     * Main scraper method. Accomplishes the following: <br>
+     * - Deletes the existing store prices from database, <br>
+     * - Reads scrape_targets.json for links and store data to scrape from, <br>
+     * - For each store, sets store via POST request (and adds if missing), and scrapes each supermarket link, <br>
+     * - Processes scraped data into Product objects and StorePrice objects and puts into database. <br>
+     */
     private synchronized void executeScraping() {
         // firstly wipe storeprices and generate cache from noted products
         databaseService.clearPrices();
         databaseService.generateProductCache();
         // open json file, parsed as object?
         try (InputStream inputStream = targets.getInputStream()) {
-            // iterate ove reach supermarket brand (e.g. paknsave, new world, etc.)
+            // iterate over reach supermarket brand (e.g. paknsave, new world, etc.)
             for (ScraperConfig scraperData : mapper.readValue(inputStream, new TypeReference<List<ScraperConfig>>(){})) {
                 for (Map<String, String> storeInfo : scraperData.branches()) {
                     // change client's store region
@@ -161,6 +176,9 @@ public class WebScraperService {
         } 
     }
 
+    /**
+     * Helper method to introduce delay, as basic rate-limit prevention mechanism.
+     */
     private void sleepRandom() {
         try {
             Thread.sleep(ThreadLocalRandom.current().nextLong(1000, 3000));
@@ -191,12 +209,12 @@ public class WebScraperService {
     private void scrapeLinks(List<String> links, Store store) {
         for (String link : links) {
             sleepRandom(); // apply random pause for no rate limiting
-            Optional<Document> docOpt = getWebPage(link);
-            if (docOpt.isEmpty()) {
+            Optional<HttpResponse<String>> responseOptional = getWebResponse(link);
+            if (responseOptional.isEmpty()) {
                 System.err.println("Link failed, skipping: " + link);
                 continue;
             }
-            Document doc = docOpt.get();
+            Document doc = Jsoup.parse(responseOptional.get().body());
             List<ProductInfo> productData = extractProducts(doc);
 
             for (ProductInfo productInfo : productData) {
@@ -209,15 +227,26 @@ public class WebScraperService {
         }
     }
 
+    // TODO refactor the request methods to a unified instance?
+
+    /**
+     * Helper method for processing GET body without repeated try-catch patterns. Defaults to reading body as String.
+     * @param link the URL to GET
+     * @return the HttpResponse result, else Optional.empty()
+     */
+    private Optional<HttpResponse<String>> getWebResponse(String link) {
+        return getWebResponse(link, HttpResponse.BodyHandlers.ofString());
+    }
+
     /**
      * Helper method for processing GET body without repeated try-catch patterns.
      * @param link the URL to GET
-     * @return the link's DOM, else Optional.empty()
+     * @param handler The BodyHandler, which interprets response body.
+     * @return the HttpResponse result, else Optional.empty()
      */
-    private Optional<Document> getWebPage(String link) {
+    private <T> Optional<HttpResponse<T>> getWebResponse(String link, BodyHandler<T> handler) {
         try {
-            HttpResponse<String> res = scraperClient.send(makeRequest(link), HttpResponse.BodyHandlers.ofString());
-            return Optional.of(Jsoup.parse(res.body()));
+            return Optional.of(scraperClient.send(makeRequest(link), handler));
         } catch (InterruptedException exc) { // propagate interruption signal
             System.err.println("Caught interrupt from GET " + link + ", no data returned.");
             Thread.currentThread().interrupt();
@@ -225,7 +254,25 @@ public class WebScraperService {
             System.err.println("Caught IO error from GET " + link + ", no data returned.");
         }
         return Optional.empty();
-        
+    }
+
+    /**
+     * Encapsulates POST request sending with error checking.
+     * @param <T> The return type of the HttpResponse, based on expected read (e.g. String or discarding)
+     * @param request The HttpRequest to sent by client
+     * @param handler The BodyHandler type, how the response data should be interpreted
+     * @return If no errors, the HttpResponse with valid data. Else, Optional.empty()
+     */
+    private <T> Optional<HttpResponse<T>> postWebResponse(HttpRequest request, BodyHandler<T> handler) {
+        try {
+            return Optional.of(scraperClient.send(request, handler));
+        } catch (InterruptedException exc) {
+            System.err.println("Caught interrupt from GET " + request.uri().toString() + ", no data returned.");
+            Thread.currentThread().interrupt();
+        } catch (IOException exc) {
+            System.err.println("Caught IO error from GET " + request.uri().toString() + ", no data returned.");
+        }
+        return Optional.empty();
     }
 
     /**
@@ -254,8 +301,8 @@ public class WebScraperService {
                 }
                 
             } else {
-                price = null;
-                System.out.println("Price invalid/not found");
+                System.err.println("Price not found for product " + name + ", skipping...");
+                continue;
             }
 
             Element sizeElement = product.selectXpath(PRODUCT_SIZE_XPATH).first();
@@ -273,13 +320,7 @@ public class WebScraperService {
      */
     private String paknsaveInit() {
         // initialise generic store cookies - visit homepage
-        try {
-            // send request discarding GET body (we only care about cookies)
-            scraperClient.send(makeRequest(PAKNSAVE_ADDRESS), HttpResponse.BodyHandlers.discarding());
-        } catch (Exception exc) {
-            exc.printStackTrace();
-            return null;
-        }
+        getWebResponse(PAKNSAVE_ADDRESS, HttpResponse.BodyHandlers.discarding());
 
         HttpRequest authRequest = HttpRequest.newBuilder()
             .uri(URI.create("https://www.paknsave.co.nz/api/user/get-current-user"))
@@ -290,15 +331,16 @@ public class WebScraperService {
             .header("Referer", PAKNSAVE_ADDRESS)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
-        
+
+        Optional<HttpResponse<String>> authOptional = postWebResponse(authRequest, HttpResponse.BodyHandlers.ofString());
+        if (authOptional.isEmpty()) {
+            throw new IllegalStateException("Auth token cannot be established.");
+        }
         try {
-            HttpResponse<String> authResponse = scraperClient.send(authRequest, HttpResponse.BodyHandlers.ofString());
-            // process json response to get the auth token
-            JsonNode authNode = mapper.readTree(authResponse.body());
+            JsonNode authNode = mapper.readTree(authOptional.get().body());
             return authNode.get("access_token").asText();
-        } catch (Exception exc) {
-            exc.printStackTrace();
-            return null;
+        } catch (JsonProcessingException exc) {
+            throw new IllegalStateException("Auth token cannot be established.");
         }
     }
 
@@ -318,20 +360,8 @@ public class WebScraperService {
             .header("Referer", PAKNSAVE_ADDRESS)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
-        try {
-            // discarding (response body is irrelevant)
-            HttpResponse<Void> response = scraperClient.send(req, HttpResponse.BodyHandlers.discarding());
-            
-            if (response.statusCode() >= 400) {
-                System.err.println("Store POST failed unexpectedly, code: " + response.statusCode());
-                return false;
-            }
-            return true;
-
-        } catch (Exception exc) {
-            exc.printStackTrace();
-            return false;
-        }
+        Optional<HttpResponse<Void>> responseOptional = postWebResponse(req, HttpResponse.BodyHandlers.discarding());
+        return responseOptional.isPresent();
         
     }
 }
