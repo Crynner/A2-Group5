@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -36,14 +37,14 @@ import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
+import nz.ac.auckland.grocerfy.repository.StorePriceRepository;
 
-// TODO have better exception handling
-// TODO logger whatnots?
-// TODO refactor generic headers
 // TODO wipe store prices every 2 days
 
 @Service
 public class WebScraperService {
+    private boolean bypassTimeDebug = true;
+
     private static final String PAKNSAVE_ADDRESS = "https://www.paknsave.co.nz";
 
     private static final String PRODUCT_XPATH = "//*[@itemtype='https://schema.org/Product']";
@@ -114,7 +115,7 @@ public class WebScraperService {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void checkAndScrapeOnStartup() {
-        if (productRepository.count() == 0) {
+        if (productRepository.count() == 0 || bypassTimeDebug) {
             executeScraping();
         }
     }
@@ -129,7 +130,9 @@ public class WebScraperService {
     }
 
     private synchronized void executeScraping() {
-        // firstly wipe storeprices
+        // firstly wipe storeprices and generate cache from noted products
+        databaseService.clearPrices();
+        databaseService.generateProductCache();
         // open json file, parsed as object?
         try (InputStream inputStream = targets.getInputStream()) {
             // iterate ove reach supermarket brand (e.g. paknsave, new world, etc.)
@@ -146,7 +149,7 @@ public class WebScraperService {
                         storeInfo.get("store_name"),
                         storeInfo.get("address"));
 
-                    System.out.println("Store created: " + currentStore.getName());
+                    System.out.println("Store initialised: " + currentStore.getName());
 
                     scrapeLinks(scraperData.links(), currentStore);
 
@@ -156,6 +159,14 @@ public class WebScraperService {
         } catch (IOException exc) {
             System.err.println("Some IO issue, " + exc.getLocalizedMessage());
         } 
+    }
+
+    private void sleepRandom() {
+        try {
+            Thread.sleep(ThreadLocalRandom.current().nextLong(1000, 3000));
+        } catch (InterruptedException exc) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -179,6 +190,7 @@ public class WebScraperService {
      */
     private void scrapeLinks(List<String> links, Store store) {
         for (String link : links) {
+            sleepRandom(); // apply random pause for no rate limiting
             Optional<Document> docOpt = getWebPage(link);
             if (docOpt.isEmpty()) {
                 System.err.println("Link failed, skipping: " + link);

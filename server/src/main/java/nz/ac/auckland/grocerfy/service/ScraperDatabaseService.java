@@ -41,7 +41,7 @@ public class ScraperDatabaseService {
     }
 
     /**
-     * Adds store, given constructor parameters, to database.
+     * Adds store, given constructor parameters, to database. Returns db store if already exists
      * @param name the store name
      * @param region the region of the store
      * @param address the address of the store (number and street)
@@ -49,6 +49,10 @@ public class ScraperDatabaseService {
      */
     @Transactional 
     public Store addStore(String name, String region, String address) {
+        Store existingStore = storeRepository.findByStoreName(name);
+        if (existingStore != null) {
+            return existingStore;
+        }
         return storeRepository.save(
             new Store(name, region, address)
         );
@@ -82,5 +86,17 @@ public class ScraperDatabaseService {
         Product newProduct = productRepository.save(new Product(name, size));
         productCache.put(cacheName, newProduct);
         return newProduct;
+    }
+
+    public void generateProductCache() {
+        for (Product product : productRepository.findAll()) {
+            String cacheName = product.getProductName() + ":~:" + product.getSize();
+            productCache.put(cacheName, product);
+        }
+    }
+
+    @Transactional
+    public void clearPrices() {
+        storePriceRepository.deleteAllInBatch();
     }
 }
