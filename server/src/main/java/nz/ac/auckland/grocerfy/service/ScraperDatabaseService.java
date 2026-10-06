@@ -41,6 +41,14 @@ public class ScraperDatabaseService {
     }
 
     /**
+     * Abstraction method to check if database is newly created and has no products, must always scrape
+     * @return whether the database needs scraping.
+     */
+    public boolean isDatabaseNew() {
+        return productRepository.count() == 0;
+    }
+
+    /**
      * Adds store, given constructor parameters, to database. Returns db store if already exists
      * @param name the store name
      * @param region the region of the store

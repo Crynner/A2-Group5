@@ -28,7 +28,6 @@ import nz.ac.auckland.grocerfy.dto.ScraperConfig;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
-import nz.ac.auckland.grocerfy.repository.ProductRepository;
 import nz.ac.auckland.grocerfy.scraper.PaknsaveScraper;
 import nz.ac.auckland.grocerfy.scraper.SupermarketScraper;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
@@ -46,8 +45,6 @@ public class WebScraperService {
 
     private SupermarketScraper currentScraper;
 
-    private final ProductRepository productRepository;
-
     private final ScraperDatabaseService databaseService;
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -57,10 +54,8 @@ public class WebScraperService {
 
     @Autowired 
     public WebScraperService(
-        ProductRepository productRepository,
         ScraperDatabaseService databaseService
     ) {
-        this.productRepository = productRepository;
         this.databaseService = databaseService;
     }
 
@@ -70,7 +65,7 @@ public class WebScraperService {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void checkAndScrapeOnStartup() {
-        if (productRepository.count() == 0 || bypassTimeDebug) {
+        if (databaseService.isDatabaseNew() || bypassTimeDebug) {
             executeScraping();
         }
     }
