@@ -28,6 +28,7 @@ import nz.ac.auckland.grocerfy.dto.ScraperConfig;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
+import nz.ac.auckland.grocerfy.scraper.NewWorldScraper;
 import nz.ac.auckland.grocerfy.scraper.PaknsaveScraper;
 import nz.ac.auckland.grocerfy.scraper.SupermarketScraper;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
@@ -40,7 +41,8 @@ public class WebScraperService {
     private static final int SCRAPE_DELAY_MAX = 3000;
 
     private static final Map<String, SupermarketScraper> scrapers = Map.of(
-        "Pak'nSave", new PaknsaveScraper()
+        "Pak'nSave", new PaknsaveScraper(),
+        "New World", new NewWorldScraper()
     );
 
     private SupermarketScraper currentScraper;
