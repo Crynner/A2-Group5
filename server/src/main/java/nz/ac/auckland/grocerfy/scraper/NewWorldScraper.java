@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
+import nz.ac.auckland.grocerfy.model.Allergen;
 
 public class NewWorldScraper extends SupermarketScraper {
     private static final String STORE_ADDRESS = "https://www.newworld.co.nz/";
@@ -106,9 +107,13 @@ public class NewWorldScraper extends SupermarketScraper {
             Element sizeElement = product.selectXpath(PRODUCT_SIZE_XPATH).first();
             String size = sizeElement == null ? null : sizeElement.text().trim();
 
-            products.add(new ProductInfo(name, price, size));
+            products.add(new ProductInfo(name, price, size, ""));
         }
 
         return products;
+    }
+
+    public List<Allergen> getProductAllergens(String productId, String storeUuid) {
+        return null;
     }
 }

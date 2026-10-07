@@ -26,12 +26,16 @@ public class Store {
     @Column(nullable = false)
     private String address; // composite/record?
 
+    @Column(nullable = false)
+    private String storeCode;
+
     public Store() { }
 
-    public Store(String name, String region, String address) {
+    public Store(String name, String region, String address, String code) {
         this.storeName = name;
         this.region = region;
         this.address = address;
+        this.storeCode = code;
     }
 
     public Long getId() {
@@ -48,6 +52,10 @@ public class Store {
 
     public String getAddress() {
         return address;
+    }
+
+    public String getCode() {
+        return storeCode;
     }
 
 }

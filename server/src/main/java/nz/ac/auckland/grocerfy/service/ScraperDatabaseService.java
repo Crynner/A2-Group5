@@ -56,13 +56,13 @@ public class ScraperDatabaseService {
      * @return
      */
     @Transactional 
-    public Store addStore(String name, String region, String address) {
+    public Store addStore(String name, String region, String address, String code) {
         Store existingStore = storeRepository.findByStoreName(name);
         if (existingStore != null) {
             return existingStore;
         }
         return storeRepository.save(
-            new Store(name, region, address)
+            new Store(name, region, address, code)
         );
     }
 

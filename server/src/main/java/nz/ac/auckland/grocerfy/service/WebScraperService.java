@@ -109,7 +109,8 @@ public class WebScraperService {
                     Store currentStore = databaseService.addStore(
                         scraperData.supermarket() + " " + storeInfo.get("store_name"),
                         storeInfo.get("store_name"),
-                        storeInfo.get("address"));
+                        storeInfo.get("address"),
+                        storeInfo.get("region_cookie"));
 
                     System.out.println("Store initialised: " + currentStore.getName());
 
@@ -166,6 +167,8 @@ public class WebScraperService {
 
             // check each product exists (add to db if doesn't), and map it to store and price value
             for (ProductInfo productInfo : productData) {
+                currentScraper.getProductAllergens(productInfo.productId(), store.getCode());
+                randomRequestDelay();
                 Product product = databaseService.createOrGetProduct(productInfo.productName(), productInfo.productSize());
                 StorePrice productPrice = new StorePrice(product, store, productInfo.price());
 

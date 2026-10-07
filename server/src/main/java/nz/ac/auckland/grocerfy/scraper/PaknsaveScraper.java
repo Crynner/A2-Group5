@@ -5,8 +5,12 @@ import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -17,6 +21,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
+import nz.ac.auckland.grocerfy.model.Allergen;
 
 public class PaknsaveScraper extends SupermarketScraper {
     private static final String STORE_ADDRESS = "https://www.paknsave.co.nz";
@@ -24,6 +29,7 @@ public class PaknsaveScraper extends SupermarketScraper {
     private static final String STORE_CHANGE_ENDPOINT = "https://api-prod.paknsave.co.nz/v1/edge/cart/store/";
 
     private static final String PRODUCT_XPATH = "//*[@itemtype='https://schema.org/Product']";
+    private static final String PRODUCT_URL_XPATH = ".//a[1]";
     private static final String PRODUCT_NAME_XPATH = ".//*[@itemprop='name']";
     private static final String PRODUCT_PRICE_DOLLARS_XPATH = ".//*[@data-testid='price-dollars']";
     private static final String PRODUCT_PRICE_CENTS_XPATH = ".//*[@data-testid='price-cents']";
@@ -106,9 +112,76 @@ public class PaknsaveScraper extends SupermarketScraper {
             Element sizeElement = product.selectXpath(PRODUCT_SIZE_XPATH).first();
             String size = sizeElement == null ? null : sizeElement.text().trim();
 
-            products.add(new ProductInfo(name, price, size));
+            // get page for allergy crap
+            Element productLink = product.selectXpath(PRODUCT_URL_XPATH).first();
+            // url stored in the DOM has multiple RequestParam components (i.e. the ?name=value?cost=etc)
+            String untrimmedUrl = productLink.attr("href");
+            Pattern productIdPattern = Pattern.compile("\\/([^\\/]*?)pns\\?");
+            Matcher matcher = productIdPattern.matcher(untrimmedUrl);
+            matcher.find();
+            String productId = matcher.group(1)
+                .toUpperCase()
+                .replace("_", "-");
+
+            products.add(new ProductInfo(name, price, size, productId));
         }
 
         return products;
+    }
+
+    public List<Allergen> getProductAllergens(String productId, String storeUuid) {
+        HttpRequest productInfoRequest = HttpRequest.newBuilder()
+            .uri(URI.create("https://api-prod.paknsave.co.nz/v1/edge/store/" + storeUuid + "/product/" + productId))
+            .headers(HttpUtils.getGenericHeaders())
+            .headers(HttpUtils.getPostHeaders())
+            .header("Sec-Fetch-Site", "same-site")
+            .header("Authorization", "Bearer " + authToken)
+            .header("Origin", STORE_ADDRESS)
+            .header("Referer", STORE_ADDRESS)
+            .GET()
+            .build();
+
+        Optional<HttpResponse<String>> productInfoOptional = HttpUtils.sendHttpRequest(productInfoRequest, HttpResponse.BodyHandlers.ofString());
+        if (productInfoOptional.isEmpty()) {
+            System.err.println("Product info for product id " + productId + " unable to be retrieved. Skipping...");
+            return null;
+        }
+        try {
+            JsonNode responseNode = mapper.readTree(productInfoOptional.get().body());
+            // read allergens first, base solely off that, else look at ingredients, else use UNKNOWN
+            String allergenString = "";
+
+            JsonNode ingredients = responseNode.get("ingredientStatement");
+            if (ingredients != null) {
+                allergenString = allergenString.concat(ingredients.asText().toLowerCase() + " "); // add space to separate from allergen list
+            }
+            JsonNode allergens = responseNode.get("allergenStatement");
+            if (allergens != null) {
+                allergenString = allergenString.concat(allergens.asText().toLowerCase());
+            }
+
+            // if not empty, run regex checks on Allergen enum
+            if (!allergenString.equals("")) {
+                Set<Allergen> productAllergens = EnumSet.noneOf(Allergen.class);
+                for (Allergen allergen : Allergen.values()) {
+                    for (String keyword : allergen.getKeywords()) {
+                        Pattern keywordPattern = Pattern.compile("\\b" + keyword + "\\b");
+                        if (keywordPattern.matcher(allergenString).find()) {
+                            productAllergens.add(allergen);
+                            break; // check next allergen
+                        }
+                    }
+                }
+            } 
+            // should set to actual product as param, inject fields in post
+            
+
+            // set vegan/vegetarian flag, non-gmo? read facets list
+            return null;
+        } catch (JsonProcessingException exc) {
+            System.err.println("Product info for product id " + productId + " unable to be read. Skipping...");
+        }
+        
+        return null;
     }
 }
