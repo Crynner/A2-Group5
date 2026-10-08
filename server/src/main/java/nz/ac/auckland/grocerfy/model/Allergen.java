@@ -10,7 +10,7 @@ public enum Allergen {
     PEANUT("peanut", "peanuts"),
     SOY("soy", "soya", "soybean", "soyabean"),
     TREENUT("almond", "almonds", "treenut", "treenuts", "tree nuts", "tree nut", "cashew", "cashews", "walnut", "walnuts", "pistachio", "pistachios", "pecan", "pecans", "nut", "nuts"),
-    SESAME("seed", "sesame", "seeds", "poppy", "mustard"),
+    SESAME("seed", "sesame", "seeds", "poppy"),
     WHEAT("wheat"),
     GLUTEN("gluten"),
     UNKNOWN(); // when no product data can conclude

@@ -35,13 +35,19 @@ public class Product {
 
     @ElementCollection
     @Enumerated(EnumType.STRING)
-    private Set<Allergen> allergens = new HashSet<>(); 
+    private Set<Allergen> allergens;
+    
+    @ElementCollection 
+    @Enumerated (EnumType.STRING)
+    private Set<Dietary> dietInfo;
 
     public Product() { }
 
-    public Product(String productName, String size) {
+    public Product(String productName, String size, Set<Allergen> allergens, Set<Dietary> dietInfo) {
         this.productName = productName;
         this.size = size;
+        this.allergens = allergens;
+        this.dietInfo = dietInfo;
     }
 
     public Long getId() {
@@ -54,5 +60,13 @@ public class Product {
 
     public String getSize() {
         return size;
+    }
+
+    public Set<Allergen> getAllergens() {
+        return allergens;
+    }
+
+    public Set<Dietary> getDietInfo() {
+        return dietInfo;
     }
 }

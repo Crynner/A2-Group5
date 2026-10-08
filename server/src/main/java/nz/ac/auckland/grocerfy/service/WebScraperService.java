@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.jsoup.Jsoup;
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
+import org.springframework.data.util.Pair;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -51,7 +53,7 @@ public class WebScraperService {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Value ("classpath:scrape_targets_min.json")
+    @Value ("classpath:scrape_targets.json")
     private Resource targets;
 
     @Autowired 
@@ -167,9 +169,14 @@ public class WebScraperService {
 
             // check each product exists (add to db if doesn't), and map it to store and price value
             for (ProductInfo productInfo : productData) {
-                currentScraper.getProductAllergens(productInfo.productId(), store.getCode());
                 randomRequestDelay();
-                Product product = databaseService.createOrGetProduct(productInfo.productName(), productInfo.productSize());
+                Product product = databaseService.createOrGetProduct(
+                    currentScraper,
+                    productInfo.productName(),
+                    productInfo.productSize(),
+                    productInfo.productId(),
+                    store.getCode());
+                
                 StorePrice productPrice = new StorePrice(product, store, productInfo.price());
 
                 databaseService.saveProductPrice(productPrice);

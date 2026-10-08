@@ -6,6 +6,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -15,13 +16,17 @@ import java.util.regex.Pattern;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.data.util.Pair;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
 import nz.ac.auckland.grocerfy.model.Allergen;
+import nz.ac.auckland.grocerfy.model.Dietary;
+import nz.ac.auckland.grocerfy.model.Product;
 
 public class PaknsaveScraper extends SupermarketScraper {
     private static final String STORE_ADDRESS = "https://www.paknsave.co.nz";
@@ -112,7 +117,6 @@ public class PaknsaveScraper extends SupermarketScraper {
             Element sizeElement = product.selectXpath(PRODUCT_SIZE_XPATH).first();
             String size = sizeElement == null ? null : sizeElement.text().trim();
 
-            // get page for allergy crap
             Element productLink = product.selectXpath(PRODUCT_URL_XPATH).first();
             // url stored in the DOM has multiple RequestParam components (i.e. the ?name=value?cost=etc)
             String untrimmedUrl = productLink.attr("href");
@@ -129,7 +133,7 @@ public class PaknsaveScraper extends SupermarketScraper {
         return products;
     }
 
-    public List<Allergen> getProductAllergens(String productId, String storeUuid) {
+    public Pair<Set<Allergen>, Set<Dietary>> getProductInfo(String productId, String storeUuid) {
         HttpRequest productInfoRequest = HttpRequest.newBuilder()
             .uri(URI.create("https://api-prod.paknsave.co.nz/v1/edge/store/" + storeUuid + "/product/" + productId))
             .headers(HttpUtils.getGenericHeaders())
@@ -147,6 +151,9 @@ public class PaknsaveScraper extends SupermarketScraper {
             return null;
         }
         try {
+            Set<Allergen> productAllergens = EnumSet.noneOf(Allergen.class);
+            Set<Dietary> productDietary = EnumSet.noneOf(Dietary.class);
+
             JsonNode responseNode = mapper.readTree(productInfoOptional.get().body());
             // read allergens first, base solely off that, else look at ingredients, else use UNKNOWN
             String allergenString = "";
@@ -162,7 +169,6 @@ public class PaknsaveScraper extends SupermarketScraper {
 
             // if not empty, run regex checks on Allergen enum
             if (!allergenString.equals("")) {
-                Set<Allergen> productAllergens = EnumSet.noneOf(Allergen.class);
                 for (Allergen allergen : Allergen.values()) {
                     for (String keyword : allergen.getKeywords()) {
                         Pattern keywordPattern = Pattern.compile("\\b" + keyword + "\\b");
@@ -175,9 +181,31 @@ public class PaknsaveScraper extends SupermarketScraper {
             } 
             // should set to actual product as param, inject fields in post
             
-
             // set vegan/vegetarian flag, non-gmo? read facets list
-            return null;
+            JsonNode facets = responseNode.get("facets");
+            if (facets != null) {
+                Iterator<JsonNode> facetIterator = facets.elements();
+                facetIterator.forEachRemaining(facet -> addDietaryIfMatch(productDietary, facet));
+            }
+
+            JsonNode categoryNode = responseNode.get("categories");
+            if (categoryNode == null) {
+                System.err.println("vegetarian category not found, skipping...");
+                return Pair.of(productAllergens, productDietary);
+            }
+            List<String> productCategories = mapper.convertValue(categoryNode, new TypeReference<List<String>>(){});
+            for (String category : productCategories) {
+                if (category.equalsIgnoreCase("vegetables") ||
+                        category.equalsIgnoreCase("fruit")) {
+                    productDietary.add(Dietary.VEGAN);
+                    productDietary.add(Dietary.VEGETARIAN);
+                    System.out.println("fruit/veg, adding vegan/vegetarian");
+                }
+            }
+
+        System.out.println("returned product successfully");
+        return Pair.of(productAllergens, productDietary);
+
         } catch (JsonProcessingException exc) {
             System.err.println("Product info for product id " + productId + " unable to be read. Skipping...");
         }
