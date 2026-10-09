@@ -98,6 +98,9 @@ public class ScraperDatabaseService {
         return newProduct;
     }
 
+    /**
+     * Populates product cache to ensure local uniqueness of inserted products
+     */
     public void generateProductCache() {
         for (Product product : productRepository.findAll()) {
             String cacheName = product.getProductName() + ":~:" + product.getSize();
@@ -105,6 +108,9 @@ public class ScraperDatabaseService {
         }
     }
 
+    /**
+     * Wipes all store prices. Keeps to schedule in refreshing prices every 2 days.
+     */
     @Transactional
     public void clearPrices() {
         storePriceRepository.deleteAllInBatch();

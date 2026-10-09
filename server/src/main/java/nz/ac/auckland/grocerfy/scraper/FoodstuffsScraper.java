@@ -36,7 +36,6 @@ public class FoodstuffsScraper extends SupermarketScraper{
     private static final String PRODUCT_PRICE_CENTS_XPATH = ".//*[@data-testid='price-cents']";
     private static final String PRODUCT_SIZE_XPATH = ".//*[@data-testid='product-subtitle']";
 
-
     private final String storeAddress;
     private final String authAddress;
     private final String storeChangeEndpoint;
@@ -47,11 +46,35 @@ public class FoodstuffsScraper extends SupermarketScraper{
 
     protected String authToken;
 
+    /**
+     * If the itemDescription field from getProductInfo matches any dietary strings,
+     * add to the dietary set.
+     * @param dietSet the set of dietary enums relevant to the product
+     * @param facet The facet map, containing "itemCode" and "itemDescription".
+     */
+    private void addDietaryIfMatch(Set<Dietary> dietSet, JsonNode facet) {
+        String facetName = facet.get("itemDescription").asText();
+        for (Dietary diet : Dietary.values()) {
+            if (facetName.equalsIgnoreCase(diet.getKeyword())) {
+                dietSet.add(diet);
+                System.out.println("adding dietary " + facetName);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Constructor for fill-in values for specific foodstuff stores. Having the domain address (not including "https://www",
+     * like newworld.co.nz) and product suffix for their website (e.g. "nw", "pns") changes all links used, as they all follow
+     * the same website structure.
+     * @param storeAddress
+     * @param suffix
+     */
     protected FoodstuffsScraper(String storeAddress, String suffix) {
         this.storeAddress = "https://www." + storeAddress;
-        this.authAddress = storeAddress + "/api/user/get-current-user";
-        this.storeChangeEndpoint = "https://api-prod." + storeAddress + "/v1/edge/cart/store";
-        this.productInfoEndpoint = "https://api-prod." + storeAddress + "/v1/edge/store";
+        this.authAddress = this.storeAddress + "/api/user/get-current-user";
+        this.storeChangeEndpoint = "https://api-prod." + storeAddress + "/v1/edge/cart/store/";
+        this.productInfoEndpoint = "https://api-prod." + storeAddress + "/v1/edge/store/";
 
         // matches product id found in url of product, thus having to exclude '/' in capturing group (e.g. 5264169-ea-000)
         this.productIdPattern = Pattern.compile("\\/([^\\/]*?)" + suffix + "\\?");
@@ -83,10 +106,13 @@ public class FoodstuffsScraper extends SupermarketScraper{
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
 
+        // if auth token cannot be retrieved, nothing else to do, should terminate.
         Optional<HttpResponse<String>> authOptional = HttpUtils.sendHttpRequest(authRequest, HttpResponse.BodyHandlers.ofString());
         if (authOptional.isEmpty()) {
             throw new IllegalStateException("Auth token cannot be established.");
         }
+
+        // foodstuffs returns a json, where "access_token" is the only relevant field for auth
         try {
             JsonNode authNode = mapper.readTree(authOptional.get().body());
             authToken = authNode.get("access_token").asText();
@@ -101,9 +127,9 @@ public class FoodstuffsScraper extends SupermarketScraper{
             throw new IllegalStateException("Request returns null, unexpected (is the link valid?)");
         }
         HttpResponse<T> response = responseOptional.get();
-        // potentially due to auth token expiry
         if (response.statusCode() >= 400) {
             refreshCookies();
+            // remake request with new auth (99% time would be from product GET)
             HttpRequest newRequest = HttpRequest.newBuilder()
                 .uri(request.uri())
                 .headers(HttpUtils.getGenericHeaders())
@@ -118,8 +144,9 @@ public class FoodstuffsScraper extends SupermarketScraper{
             if (responseOptional2.isEmpty()) { // shouldn't get here unless through other exceptions
                 throw new IllegalStateException("Request returns null, unexpected (is the link valid?)");
             }
-            // second check doesn't work? hard to tell why, workaround with multiple exc
+            
             HttpResponse<T> response2 = responseOptional2.get();
+            // if still fails, out of our control (would need further development)
             if (response2.statusCode() >= 400) { 
                 throw new IllegalStateException("Error with request links, does not return after refreshing auth: " + request.uri().toString());
             }
@@ -129,6 +156,7 @@ public class FoodstuffsScraper extends SupermarketScraper{
     }
     
     public boolean changeStore(String storeData) {
+        // makes request to storeChangeEndpoint with new store uuid, has no response (something in cookie?)
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(storeChangeEndpoint + storeData))
             .headers(HttpUtils.getGenericHeaders())
@@ -157,11 +185,14 @@ public class FoodstuffsScraper extends SupermarketScraper{
             if (dollarElement != null && centElement != null) {
                 try {
                     price = new BigDecimal(dollarElement.text() + "." + centElement.text());
+
+                // if values do not make a valid price
                 } catch (NumberFormatException e) {
                     price = null;
                     System.err.println("Error for product: " + name + " given price " + dollarElement.text() + "." + centElement.text() + ": " + e.getLocalizedMessage());
                 }
-                
+            
+            // would really only happen with out of stock/broken products, recoverable so skip
             } else {
                 System.err.println("Price not found for product " + name + ", skipping...");
                 continue;
@@ -171,8 +202,8 @@ public class FoodstuffsScraper extends SupermarketScraper{
             String size = sizeElement == null ? null : sizeElement.text().trim();
 
             Element productLink = product.selectXpath(PRODUCT_URL_XPATH).first();
-            // url stored in the DOM has multiple RequestParam components (i.e. the ?name=value?cost=etc)
             String untrimmedUrl = productLink.attr("href");
+            // extract product ID from url and format to valid request format
             Matcher matcher = productIdPattern.matcher(untrimmedUrl);
             matcher.find();
             String productId = matcher.group(1)
@@ -237,20 +268,12 @@ public class FoodstuffsScraper extends SupermarketScraper{
 
             JsonNode categoryNode = responseNode.get("categories");
             if (categoryNode == null) {
-                System.err.println("Category JSON not found(?), short-circuiting...");
+                System.err.println("Category JSON not found(network error?), short-circuiting...");
                 return Pair.of(productAllergens, productDietary);
             }
             List<String> productCategories = mapper.convertValue(categoryNode, new TypeReference<List<String>>(){});
-            for (String category : productCategories) {
-                if (category.equalsIgnoreCase("vegetables") ||
-                        category.equalsIgnoreCase("fruit")) {
-                    productDietary.add(Dietary.VEGAN);
-                    productDietary.add(Dietary.VEGETARIAN);
-                    System.out.println("Product in Fruit/Veg category, adding Vegetarian/Vegan tag");
-                }
-            }
+            checkCategoryForDietaryOrAllergen(productAllergens, productDietary, productCategories);
 
-            System.out.println("Product Dietary/Allergens fully identified: " + productId);
             return Pair.of(productAllergens, productDietary);
 
         } catch (JsonProcessingException exc) {
@@ -258,6 +281,28 @@ public class FoodstuffsScraper extends SupermarketScraper{
         }
         
         return null;
+    }
+
+    /**
+     * Checks the list of strings in the "categories" json node of a product to check for common 
+     * implied dietary/allergies. For example, any product in the egg category contains eggs.
+     * All fruit/veg is vegan/vegetarian.
+     * @param allergenList the set of Allergens to add to
+     * @param dietaryList the set of Dietary to add to
+     * @param categories the list of strings from categories
+     */
+    private void checkCategoryForDietaryOrAllergen(Set<Allergen> allergenList, Set<Dietary> dietaryList, List<String> categories) {
+        for (String category : categories) {
+            if (category.equalsIgnoreCase("vegetables") ||
+                    category.equalsIgnoreCase("fruit")) {
+                dietaryList.add(Dietary.VEGAN);
+                dietaryList.add(Dietary.VEGETARIAN);
+                System.out.println("Product in Fruit/Veg category, adding Vegetarian/Vegan tag");
+            } else if (category.equalsIgnoreCase("eggs")) {
+                allergenList.add(Allergen.EGG);
+                System.out.println("Product in 'Egg' category, adding egg allergy");
+            }
+        }
     }
     
 }

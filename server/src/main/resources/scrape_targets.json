@@ -9,13 +9,28 @@
             "https://www.paknsave.co.nz/shop/category/frozen",
             "https://www.paknsave.co.nz/shop/category/pantry",
             "https://www.paknsave.co.nz/shop/category/hot-and-cold-drinks",
-            "https://www.paknsave.co.nz/shop/category/beer-wine-and-cider"
+            "https://www.paknsave.co.nz/shop/category/beer-wine-and-cider",
+            "https://www.paknsave.co.nz/shop/category/health-and-body",
+            "https://www.paknsave.co.nz/shop/category/baby-and-toddler",
+            "https://www.paknsave.co.nz/shop/category/pets",
+            "https://www.paknsave.co.nz/shop/category/household-and-cleaning",
+            "https://www.paknsave.co.nz/shop/category/snacks-treats-and-easy-meals"
         ],
         "branches": [
             {
                 "store_name": "Royal Oak",
                 "address": "691 Manukau Road, Royal Oak, Auckland 1023",
                 "region_cookie": "e1925ea7-01bc-4358-ae7c-c6502da5ab12"
+            },
+            {
+                "store_name": "Manukau",
+                "address": "6 Cavendish Drive, Manukau City Centre, Auckland 2104",
+                "region_cookie": "9cd8eb60-3222-4efc-bd7c-50e03e6a81a4" 
+            },
+            {
+                "store_name": "Albany",
+                "address": "Don McKinnon Drive, Albany, Auckland 0632",
+                "region_cookie": "65defcf2-bc15-490e-a84f-1f13b769cd22"
             }
         ]
     },
@@ -29,13 +44,27 @@
             "https://www.newworld.co.nz/shop/category/frozen",
             "https://www.newworld.co.nz/shop/category/pantry",
             "https://www.newworld.co.nz/shop/category/hot-and-cold-drinks",
-            "https://www.newworld.co.nz/shop/category/beer-wine-and-cider"
+            "https://www.newworld.co.nz/shop/category/beer-wine-and-cider",
+            "https://www.newworld.co.nz/shop/category/health-and-body",
+            "https://www.newworld.co.nz/shop/category/baby-and-toddler",
+            "https://www.newworld.co.nz/shop/category/pets",
+            "https://www.newworld.co.nz/shop/category/household-and-cleaning"
         ],
         "branches": [
             {
                 "store_name": "Browns Bay",
                 "address": "2 Inverness Road, Browns Bay, Auckland 0630",
                 "region_cookie": "dbdfdd2a-55f7-4870-9b51-979286323647"
+            },
+            {
+                "store_name": "Albany",
+                "address": "219 Don McKinnon Drive, Albany, Auckland 0632",
+                "region_cookie": "773ad0a0-024e-46c5-a94b-df1cf86d25cc" 
+            },
+            {
+                "store_name": "Metro Queen Street",
+                "address": "125 Queen Street, Auckland Central, Auckland 1010",
+                "region_cookie": "60928d93-06fa-4d8f-92a6-8c359e7e846d"
             }
         ]
     }
