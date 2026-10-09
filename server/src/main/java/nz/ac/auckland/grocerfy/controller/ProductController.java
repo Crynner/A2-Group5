@@ -1,5 +1,6 @@
 package nz.ac.auckland.grocerfy.controller;
 
+import java.util.Collections;
 import java.util.List;
 
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -31,6 +32,6 @@ public class ProductController {
 	@GetMapping
 	public List<ProductSearchResponse> search(
 			@RequestParam(required = false) String query) {
-		return productSearchService.search(query);
+		return productSearchService.search(query, Collections.emptySet(), Collections.emptySet()); // dummied diet/allergen, TODO fix later
 	}
 }

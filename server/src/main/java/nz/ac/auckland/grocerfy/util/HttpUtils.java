@@ -48,7 +48,11 @@ public class HttpUtils {
 
     public static <T> Optional<HttpResponse<T>> sendHttpRequest(HttpRequest request, BodyHandler<T> bodyHandler) {
         try {
-            return Optional.of(client.send(request, bodyHandler));
+            HttpResponse<T> response = client.send(request, bodyHandler);
+            if (response.statusCode() >= 400) {
+                System.err.println("This link has returned an error code " + response.statusCode() + ": " + request.uri());
+            }
+            return Optional.of(response);
         } catch (InterruptedException exc) {
             System.err.println("Caught interrupt from GET " + request.uri().toString() + ", no data returned.");
             Thread.currentThread().interrupt();

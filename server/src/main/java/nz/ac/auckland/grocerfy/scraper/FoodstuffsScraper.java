@@ -24,16 +24,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
-import nz.ac.auckland.grocerfy.util.HttpUtils;
 import nz.ac.auckland.grocerfy.model.Allergen;
 import nz.ac.auckland.grocerfy.model.Dietary;
+import nz.ac.auckland.grocerfy.util.HttpUtils;
 
-public class NewWorldScraper extends SupermarketScraper {
-    private static final String STORE_ADDRESS = "https://www.newworld.co.nz";
-    private static final String AUTH_LINK = "https://www.newworld.co.nz/api/user/get-current-user";
-    private static final String STORE_CHANGE_ENDPOINT = "https://api-prod.newworld.co.nz/v1/edge/cart/store/";
-    private static final String PRODUCT_INFO_ENDPOINT = "https://api-prod.newworld.co.nz/v1/edge/store/";
-
+public class FoodstuffsScraper extends SupermarketScraper{
     private static final String PRODUCT_XPATH = "//*[@itemtype='https://schema.org/Product']";
     private static final String PRODUCT_URL_XPATH = ".//a[1]";
     private static final String PRODUCT_NAME_XPATH = ".//*[@itemprop='name']";
@@ -41,15 +36,34 @@ public class NewWorldScraper extends SupermarketScraper {
     private static final String PRODUCT_PRICE_CENTS_XPATH = ".//*[@data-testid='price-cents']";
     private static final String PRODUCT_SIZE_XPATH = ".//*[@data-testid='product-subtitle']";
 
-    // maps to product id from url, i.e. will return 5252611_EA_000nw, truncating the nw
-    private static final String PRODUCT_ID_PATTERN = "\\/([^\\/]*?)nw\\?";
+
+    private final String storeAddress;
+    private final String authAddress;
+    private final String storeChangeEndpoint;
+    private final String productInfoEndpoint;
+    private final Pattern productIdPattern;
+
+    private final String[] originRefererHeader;
 
     protected String authToken;
+
+    protected FoodstuffsScraper(String storeAddress, String suffix) {
+        this.storeAddress = "https://www." + storeAddress;
+        this.authAddress = storeAddress + "/api/user/get-current-user";
+        this.storeChangeEndpoint = "https://api-prod." + storeAddress + "/v1/edge/cart/store";
+        this.productInfoEndpoint = "https://api-prod." + storeAddress + "/v1/edge/store";
+
+        // matches product id found in url of product, thus having to exclude '/' in capturing group (e.g. 5264169-ea-000)
+        this.productIdPattern = Pattern.compile("\\/([^\\/]*?)" + suffix + "\\?");
+
+        // origin/referer headers are always the same, just the store address (declared in constructor)
+        this.originRefererHeader = new String[]{"Origin", storeAddress, "Referer", storeAddress};
+    }
 
     public void setupCookies() {
         // initialise generic store cookies - visit homepage
         HttpRequest homepageRequest = HttpRequest.newBuilder()
-            .uri(URI.create(STORE_ADDRESS))
+            .uri(URI.create(storeAddress))
             .headers(HttpUtils.getGenericHeaders())
             .headers(HttpUtils.getGetHeaders())
             .GET()
@@ -61,12 +75,11 @@ public class NewWorldScraper extends SupermarketScraper {
 
     public void refreshCookies() {
         HttpRequest authRequest = HttpRequest.newBuilder()
-            .uri(URI.create(AUTH_LINK))
+            .uri(URI.create(authAddress))
             .headers(HttpUtils.getGenericHeaders())
             .headers(HttpUtils.getGetHeaders())
             .header("Sec-Fetch-Site", "same-origin")
-            .header("Origin", STORE_ADDRESS)
-            .header("Referer", STORE_ADDRESS)
+            .headers(originRefererHeader)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
 
@@ -91,15 +104,13 @@ public class NewWorldScraper extends SupermarketScraper {
         // potentially due to auth token expiry
         if (response.statusCode() >= 400) {
             refreshCookies();
-
             HttpRequest newRequest = HttpRequest.newBuilder()
                 .uri(request.uri())
                 .headers(HttpUtils.getGenericHeaders())
                 .headers(HttpUtils.getPostHeaders()) // post headers because of a non-traditional get (returning json)
                 .header("Sec-Fetch-Site", "same-site")
                 .header("Authorization", "Bearer " + authToken)
-                .header("Origin", STORE_ADDRESS)
-                .header("Referer", STORE_ADDRESS)
+                .headers(originRefererHeader)
                 .GET()
                 .build();
 
@@ -107,6 +118,7 @@ public class NewWorldScraper extends SupermarketScraper {
             if (responseOptional2.isEmpty()) { // shouldn't get here unless through other exceptions
                 throw new IllegalStateException("Request returns null, unexpected (is the link valid?)");
             }
+            // second check doesn't work? hard to tell why, workaround with multiple exc
             HttpResponse<T> response2 = responseOptional2.get();
             if (response2.statusCode() >= 400) { 
                 throw new IllegalStateException("Error with request links, does not return after refreshing auth: " + request.uri().toString());
@@ -118,13 +130,12 @@ public class NewWorldScraper extends SupermarketScraper {
     
     public boolean changeStore(String storeData) {
         HttpRequest req = HttpRequest.newBuilder()
-            .uri(URI.create(STORE_CHANGE_ENDPOINT + storeData))
+            .uri(URI.create(storeChangeEndpoint + storeData))
             .headers(HttpUtils.getGenericHeaders())
             .headers(HttpUtils.getPostHeaders())
             .header("Sec-Fetch-Site", "same-site")
             .header("Authorization", "Bearer " + authToken)
-            .header("Origin", STORE_ADDRESS)
-            .header("Referer", STORE_ADDRESS)
+            .headers(originRefererHeader)
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .build();
         Optional<HttpResponse<Void>> responseOptional = HttpUtils.sendHttpRequest(req, HttpResponse.BodyHandlers.discarding());
@@ -162,7 +173,6 @@ public class NewWorldScraper extends SupermarketScraper {
             Element productLink = product.selectXpath(PRODUCT_URL_XPATH).first();
             // url stored in the DOM has multiple RequestParam components (i.e. the ?name=value?cost=etc)
             String untrimmedUrl = productLink.attr("href");
-            Pattern productIdPattern = Pattern.compile(PRODUCT_ID_PATTERN);
             Matcher matcher = productIdPattern.matcher(untrimmedUrl);
             matcher.find();
             String productId = matcher.group(1)
@@ -177,17 +187,17 @@ public class NewWorldScraper extends SupermarketScraper {
 
     public Pair<Set<Allergen>, Set<Dietary>> getProductInfo(String productId, String storeUuid) {
         HttpRequest productInfoRequest = HttpRequest.newBuilder()
-            .uri(URI.create(PRODUCT_INFO_ENDPOINT + storeUuid + "/product/" + productId))
+            .uri(URI.create(productInfoEndpoint + storeUuid + "/product/" + productId))
             .headers(HttpUtils.getGenericHeaders())
             .headers(HttpUtils.getPostHeaders())
             .header("Sec-Fetch-Site", "same-site")
             .header("Authorization", "Bearer " + authToken)
-            .header("Origin", STORE_ADDRESS)
-            .header("Referer", STORE_ADDRESS)
+            .headers(originRefererHeader)
             .GET()
             .build();
 
         HttpResponse<String> productInfo = sendRequestWithAuth(productInfoRequest, HttpResponse.BodyHandlers.ofString());
+
         try {
             Set<Allergen> productAllergens = EnumSet.noneOf(Allergen.class);
             Set<Dietary> productDietary = EnumSet.noneOf(Dietary.class);
@@ -217,7 +227,6 @@ public class NewWorldScraper extends SupermarketScraper {
                     }
                 }
             } 
-            // should set to actual product as param, inject fields in post
             
             // set vegan/vegetarian flag, non-gmo? read facets list
             JsonNode facets = responseNode.get("facets");
@@ -228,7 +237,7 @@ public class NewWorldScraper extends SupermarketScraper {
 
             JsonNode categoryNode = responseNode.get("categories");
             if (categoryNode == null) {
-                System.err.println("vegetarian category not found, skipping...");
+                System.err.println("Category JSON not found(?), short-circuiting...");
                 return Pair.of(productAllergens, productDietary);
             }
             List<String> productCategories = mapper.convertValue(categoryNode, new TypeReference<List<String>>(){});
@@ -237,12 +246,12 @@ public class NewWorldScraper extends SupermarketScraper {
                         category.equalsIgnoreCase("fruit")) {
                     productDietary.add(Dietary.VEGAN);
                     productDietary.add(Dietary.VEGETARIAN);
-                    System.out.println("fruit/veg, adding vegan/vegetarian");
+                    System.out.println("Product in Fruit/Veg category, adding Vegetarian/Vegan tag");
                 }
             }
 
-        System.out.println("returned product successfully");
-        return Pair.of(productAllergens, productDietary);
+            System.out.println("Product Dietary/Allergens fully identified: " + productId);
+            return Pair.of(productAllergens, productDietary);
 
         } catch (JsonProcessingException exc) {
             System.err.println("Product info for product id " + productId + " unable to be read. Skipping...");
@@ -250,4 +259,5 @@ public class NewWorldScraper extends SupermarketScraper {
         
         return null;
     }
+    
 }

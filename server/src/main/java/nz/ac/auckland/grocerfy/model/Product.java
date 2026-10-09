@@ -1,6 +1,5 @@
 package nz.ac.auckland.grocerfy.model;
 
-import java.util.HashSet;
 import java.util.Set;
 
 import org.hibernate.annotations.Immutable;

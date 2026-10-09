@@ -7,7 +7,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -27,6 +26,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.dto.ScraperConfig;
+import nz.ac.auckland.grocerfy.model.Allergen;
+import nz.ac.auckland.grocerfy.model.Dietary;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
@@ -37,7 +38,7 @@ import nz.ac.auckland.grocerfy.util.HttpUtils;
 
 @Service
 public class WebScraperService {
-    private boolean bypassTimeDebug = true;
+    private boolean bypassTimeDebug = false;
 
     private static final int SCRAPE_DELAY_MIN = 1000;
     private static final int SCRAPE_DELAY_MAX = 3000;
@@ -153,29 +154,32 @@ public class WebScraperService {
                 .GET()
                 .build();
 
-            Optional<HttpResponse<String>> responseOptional = HttpUtils.sendHttpRequest(
+            HttpResponse<String> response = currentScraper.sendRequestWithAuth(
                 productLink, 
                 HttpResponse.BodyHandlers.ofString()
             );
-            
-            if (responseOptional.isEmpty()) {
-                System.err.println("Link failed, skipping: " + link);
-                continue;
-            }
 
             // reads html dom and extracts all products into DTO
-            Document doc = Jsoup.parse(responseOptional.get().body());
+            Document doc = Jsoup.parse(response.body());
             List<ProductInfo> productData = currentScraper.extractProducts(doc);
 
             // check each product exists (add to db if doesn't), and map it to store and price value
             for (ProductInfo productInfo : productData) {
                 randomRequestDelay();
                 Product product = databaseService.createOrGetProduct(
-                    currentScraper,
                     productInfo.productName(),
                     productInfo.productSize(),
-                    productInfo.productId(),
-                    store.getCode());
+                    () -> {
+                        Pair<Set<Allergen>, Set<Dietary>> allergenDiet = currentScraper.getProductInfo(
+                            productInfo.productId(),
+                            store.getCode());
+                        return new Product(
+                            productInfo.productName(),
+                            productInfo.productSize(), 
+                            allergenDiet.getFirst(), 
+                            allergenDiet.getSecond());
+                    }    
+                );
                 
                 StorePrice productPrice = new StorePrice(product, store, productInfo.price());
 

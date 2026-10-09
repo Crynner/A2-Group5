@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandler;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Iterator;
@@ -26,7 +27,6 @@ import nz.ac.auckland.grocerfy.dto.ProductInfo;
 import nz.ac.auckland.grocerfy.util.HttpUtils;
 import nz.ac.auckland.grocerfy.model.Allergen;
 import nz.ac.auckland.grocerfy.model.Dietary;
-import nz.ac.auckland.grocerfy.model.Product;
 
 public class PaknsaveScraper extends SupermarketScraper {
     private static final String STORE_ADDRESS = "https://www.paknsave.co.nz";
@@ -52,6 +52,10 @@ public class PaknsaveScraper extends SupermarketScraper {
             .build();
         HttpUtils.sendHttpRequest(homepageRequest, HttpResponse.BodyHandlers.discarding());
 
+        refreshCookies();
+    }
+
+    public void refreshCookies() {
         HttpRequest authRequest = HttpRequest.newBuilder()
             .uri(URI.create(AUTH_LINK))
             .headers(HttpUtils.getGenericHeaders())
@@ -72,6 +76,40 @@ public class PaknsaveScraper extends SupermarketScraper {
         } catch (JsonProcessingException exc) {
             throw new IllegalStateException("Auth token cannot be established.");
         }
+    }
+
+    public <T> HttpResponse<T> sendRequestWithAuth(HttpRequest request, BodyHandler<T> handler) {
+        Optional<HttpResponse<T>> responseOptional = HttpUtils.sendHttpRequest(request, handler);
+        if (responseOptional.isEmpty()) { // shouldn't get here unless through other exceptions
+            throw new IllegalStateException("Request returns null, unexpected (is the link valid?)");
+        }
+        HttpResponse<T> response = responseOptional.get();
+        // potentially due to auth token expiry
+        if (response.statusCode() >= 400) {
+            refreshCookies();
+            HttpRequest newRequest = HttpRequest.newBuilder()
+                .uri(request.uri())
+                .headers(HttpUtils.getGenericHeaders())
+                .headers(HttpUtils.getPostHeaders()) // post headers because of a non-traditional get (returning json)
+                .header("Sec-Fetch-Site", "same-site")
+                .header("Authorization", "Bearer " + authToken)
+                .header("Origin", STORE_ADDRESS)
+                .header("Referer", STORE_ADDRESS)
+                .GET()
+                .build();
+
+            Optional<HttpResponse<T>> responseOptional2 = HttpUtils.sendHttpRequest(newRequest, handler);
+            if (responseOptional2.isEmpty()) { // shouldn't get here unless through other exceptions
+                throw new IllegalStateException("Request returns null, unexpected (is the link valid?)");
+            }
+            // second check doesn't work? hard to tell why, workaround with multiple exc
+            HttpResponse<T> response2 = responseOptional2.get();
+            if (response2.statusCode() >= 400) { 
+                throw new IllegalStateException("Error with request links, does not return after refreshing auth: " + request.uri().toString());
+            }
+            return response2;
+        }
+        return response;
     }
     
     public boolean changeStore(String storeData) {
@@ -145,16 +183,13 @@ public class PaknsaveScraper extends SupermarketScraper {
             .GET()
             .build();
 
-        Optional<HttpResponse<String>> productInfoOptional = HttpUtils.sendHttpRequest(productInfoRequest, HttpResponse.BodyHandlers.ofString());
-        if (productInfoOptional.isEmpty()) {
-            System.err.println("Product info for product id " + productId + " unable to be retrieved. Skipping...");
-            return null;
-        }
+        HttpResponse<String> productInfo = sendRequestWithAuth(productInfoRequest, HttpResponse.BodyHandlers.ofString());
+
         try {
             Set<Allergen> productAllergens = EnumSet.noneOf(Allergen.class);
             Set<Dietary> productDietary = EnumSet.noneOf(Dietary.class);
 
-            JsonNode responseNode = mapper.readTree(productInfoOptional.get().body());
+            JsonNode responseNode = mapper.readTree(productInfo.body());
             // read allergens first, base solely off that, else look at ingredients, else use UNKNOWN
             String allergenString = "";
 
@@ -190,7 +225,7 @@ public class PaknsaveScraper extends SupermarketScraper {
 
             JsonNode categoryNode = responseNode.get("categories");
             if (categoryNode == null) {
-                System.err.println("vegetarian category not found, skipping...");
+                System.err.println("Category JSON not found(?), short-circuiting...");
                 return Pair.of(productAllergens, productDietary);
             }
             List<String> productCategories = mapper.convertValue(categoryNode, new TypeReference<List<String>>(){});
@@ -199,11 +234,11 @@ public class PaknsaveScraper extends SupermarketScraper {
                         category.equalsIgnoreCase("fruit")) {
                     productDietary.add(Dietary.VEGAN);
                     productDietary.add(Dietary.VEGETARIAN);
-                    System.out.println("fruit/veg, adding vegan/vegetarian");
+                    System.out.println("Product in Fruit/Veg category, adding Vegetarian/Vegan tag");
                 }
             }
 
-        System.out.println("returned product successfully");
+        System.out.println("Product Dietary/Allergens fully identified: " + productId);
         return Pair.of(productAllergens, productDietary);
 
         } catch (JsonProcessingException exc) {

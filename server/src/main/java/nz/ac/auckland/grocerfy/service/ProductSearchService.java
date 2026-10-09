@@ -1,11 +1,14 @@
 package nz.ac.auckland.grocerfy.service;
 
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import nz.ac.auckland.grocerfy.dto.ProductSearchResponse;
+import nz.ac.auckland.grocerfy.model.Allergen;
+import nz.ac.auckland.grocerfy.model.Dietary;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
 
@@ -30,14 +33,19 @@ public class ProductSearchService {
 	 * @return matching products ordered by name
 	 */
 	@Transactional(readOnly = true)
-	public List<ProductSearchResponse> search(String query) {
+	public List<ProductSearchResponse> search(String query, Set<Dietary> dietary, Set<Allergen> allergens) {
 
 		String pattern = (query == null || query.isBlank())
 				? "%"
 				: "%" + query.trim().toLowerCase() + "%";
 
 		return productRepository.search(
-				pattern)
+				pattern,
+				dietary,
+				dietary.size(),
+				allergens,
+				allergens.size()
+				)
 				.stream()
 				.map(this::toResponse)
 				.toList();
@@ -47,6 +55,8 @@ public class ProductSearchService {
 		return new ProductSearchResponse(
 				product.getId(),
 				product.getProductName(),
-				product.getSize());
+				product.getSize(),
+				product.getAllergens(),
+				product.getDietInfo());
 	}
 }

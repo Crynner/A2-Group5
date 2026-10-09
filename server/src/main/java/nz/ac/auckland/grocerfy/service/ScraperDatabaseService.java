@@ -4,21 +4,18 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import nz.ac.auckland.grocerfy.model.Allergen;
-import nz.ac.auckland.grocerfy.model.Dietary;
 import nz.ac.auckland.grocerfy.model.Product;
 import nz.ac.auckland.grocerfy.model.Store;
 import nz.ac.auckland.grocerfy.model.StorePrice;
 import nz.ac.auckland.grocerfy.repository.ProductRepository;
 import nz.ac.auckland.grocerfy.repository.StorePriceRepository;
 import nz.ac.auckland.grocerfy.repository.StoreRepository;
-import nz.ac.auckland.grocerfy.scraper.SupermarketScraper;
 
 /**
  ScraperDatabaseService is the database service for the webscraper script, allowing for proper enforcement
@@ -89,15 +86,14 @@ public class ScraperDatabaseService {
      * @return The product instance used in the database
      */
     @Transactional
-    public Product createOrGetProduct(SupermarketScraper scraper, String name, String size, String id, String code) {
+    public Product createOrGetProduct(String name, String size, Supplier<Product> newProductFunc) {
         // TODO convert to equals() and hashCode() implementation
         String cacheName = name + ":~:" + size;
         if (productCache.containsKey(cacheName)) {
             return productCache.get(cacheName);
         }
 
-        Pair<Set<Allergen>, Set<Dietary>> allergenDiet = scraper.getProductInfo(id, code);
-        Product newProduct = productRepository.save(new Product(name, size, allergenDiet.getFirst(), allergenDiet.getSecond()));
+        Product newProduct = productRepository.save(newProductFunc.get());
         productCache.put(cacheName, newProduct);
         return newProduct;
     }

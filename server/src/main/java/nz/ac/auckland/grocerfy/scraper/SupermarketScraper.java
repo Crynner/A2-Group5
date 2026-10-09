@@ -1,5 +1,8 @@
 package nz.ac.auckland.grocerfy.scraper;
 
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandler;
 import java.util.List;
 import java.util.Set;
 
@@ -29,6 +32,8 @@ public abstract class SupermarketScraper {
     }
 
     public abstract void setupCookies();
+    public abstract void refreshCookies();
+    public abstract <T> HttpResponse<T> sendRequestWithAuth(HttpRequest request, BodyHandler<T> handler);
     public abstract boolean changeStore(String storeData);
     public abstract List<ProductInfo> extractProducts(Document pageData);
     public abstract Pair<Set<Allergen>, Set<Dietary>> getProductInfo(String productId, String storeUuid);
